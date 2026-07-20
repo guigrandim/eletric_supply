@@ -946,16 +946,16 @@ with aba_recomendacoes:
     st.markdown(
         "- **H1 — Economia de escala**\n"
         "  - Achado: Preço unitário cai ~0,49% a cada 1% de aumento na quantidade (r²=0,27, p<0,001)\n"
-        "  - Recomendação: Consolidar pedidos entre UASGs para itens de alta recorrência\n"
+        "  - Recomendação: Comprar junto reduz o preço por unidade — juntar pedidos recorrentes entre unidades compradoras economiza dinheiro.\n"
         "- **H2 — Fornecedor vs. UASG**\n"
         "  - Achado: CV de preço maior entre fornecedores do que entre UASGs (0,260 vs. 0,243; p=0,0107)\n"
-        "  - Recomendação: Priorizar negociação com fornecedores sobre centralização regional\n"
+        "  - Recomendação: O preço varia mais pelo fornecedor do que pela região — negociar direto com o fornecedor rende mais do que reorganizar compras por área.\n"
         "- **H3 — Sazonalidade**\n"
         "  - Achado: Quantidade concentrada no início do ano civil (H=708,8, p<0,001)\n"
-        "  - Recomendação: Antecipar licitações antes da concentração de início de ano\n"
+        "  - Recomendação: As compras se concentram no início do ano — antecipar as licitações evita competir por fornecedor em cima da hora.\n"
         "- **H4 — Regularidade de consumo**\n"
         "  - Achado: Menor regularidade de consumo → maior concentração de fornecedor (rho=-0,45, p<0,001)\n"
-        "  - Recomendação: Mapear os itens com menor índice de regularidade de consumo e priorizar a qualificação de fornecedores alternativos para esse grupo"
+        "  - Recomendação: Itens comprados de forma irregular dependem de poucos fornecedores — mapear esses itens e qualificar alternativas evita ficar refém de fornecedor único."
     )
 
     st.divider()
@@ -964,7 +964,7 @@ with aba_recomendacoes:
     st.markdown("### H1 — Economia na quantidade comprada")
     st.markdown(
         "- **Insight:** Preço unitário cai ~0,49% a cada 1% de aumento na quantidade (r²=0,27, p<0,001)\n"
-        "- **Recomendação:** Consolidar pedidos entre UASGs para itens de alta recorrência"
+        "- **Recomendação:** Comprar junto reduz o preço por unidade — juntar pedidos recorrentes entre unidades compradoras economiza dinheiro."
     )
     elasticidade_classe = calcular_elasticidade_por_classe(df, top_classes_valor)
     fig_h1 = grafico_elasticidade_h1(elasticidade_classe)                                  # <- Função 6 - H1: elasticidade preço-quantidade
@@ -976,7 +976,7 @@ with aba_recomendacoes:
     st.markdown("### H2 — Variabilidade de preço: fornecedor vs. UASG")
     st.markdown(
         "- **Insight:** CV de preço maior entre fornecedores do que entre UASGs (0,260 vs. 0,243; p=0,0107)\n"
-        "- **Recomendação:** Priorizar negociação com fornecedores sobre centralização regional"
+        "- **Recomendação:** O preço varia mais pelo fornecedor do que pela região — negociar direto com o fornecedor rende mais do que reorganizar compras por área."
     )
     cv_fornecedor, cv_uasg = calcular_cv_h2(df)
     fig_h2 = grafico_cv_h2(cv_fornecedor, cv_uasg)                                         # <- Função 7 - H2: CV fornecedor vs. UASG
@@ -988,7 +988,7 @@ with aba_recomendacoes:
     st.markdown("### H3 — Sazonalidade de preço e quantidade")
     st.markdown(
         "- **Insight:** Quantidade concentrada no início do ano civil (H=708,8, p<0,001)\n"
-        "- **Recomendação:** Antecipar licitações antes da concentração de início de ano"
+        "- **Recomendação:** As compras se concentram no início do ano — antecipar as licitações evita competir por fornecedor em cima da hora."
     )
     sazonalidade_h3 = calcular_sazonalidade_h3(df)
     fig_h3 = grafico_sazonalidade_h3(sazonalidade_h3)                                      # <- Função 8 - H3: sazonalidade
@@ -1000,7 +1000,7 @@ with aba_recomendacoes:
     st.markdown("### H4 — Regularidade de consumo")
     st.markdown(
         "- **Insight:** Menor regularidade de consumo → maior concentração de fornecedor (rho=-0,45, p<0,001)\n"
-        "- **Recomendação:** mapear os itens com menor índice de regularidade de consumo e priorizar a qualificação de fornecedores alternativos para esse grupo"
+        "- **Recomendação:** Itens comprados de forma irregular dependem de poucos fornecedores — mapear esses itens e qualificar alternativas evita ficar refém de fornecedor único."
     )
     hhi_quartis_h4 = calcular_hhi_por_quartil_h4(df)
     fig_h4 = grafico_hhi_h4(hhi_quartis_h4)                                                # <- Função 9 - H4: HHI por regularidade
