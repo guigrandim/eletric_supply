@@ -548,13 +548,14 @@ def grafico_cv_h2(cv_fornecedor, cv_uasg):
 @st.cache_data
 def calcular_sazonalidade_h3(df):
     """
-    Calcula a quantidade mediana comprada por mês, agregada em todas as
-    classes de material — mesma lógica da hipótese H3.
+    Calcula a quantidade mediana comprada por mês, por classe de material —
+    mesma lógica da hipótese H3, mas segmentada por classe em vez de
+    agregada no portfólio inteiro (necessário para o heatmap mês x classe).
 
     Responde às perguntas:
     "Existe concentração de demanda em algum período do ano civil?"
-    "Em que mês a área de Suprimentos deveria antecipar o planejamento de
-    licitações para evitar desabastecimento?"
+    "Esse padrão sazonal é igual para todas as classes de material, ou muda
+    dependendo do tipo de material comprado?"
 
     Parâmetros
     ----------
@@ -564,39 +565,72 @@ def calcular_sazonalidade_h3(df):
     Retorna
     -------
     pd.DataFrame
-        Uma linha por mês (1-12), com a quantidade mediana comprada.
+        Uma linha por combinação (classe, mês 1-12), com a quantidade
+        mediana comprada.
     """
-    sub = df.dropna(subset=["data_compra"]).copy()
+    sub = df.dropna(subset=["data_compra", "nome_classe"]).copy()
     sub["mes_compra"] = sub["data_compra"].dt.month
-    return sub.groupby("mes_compra")["quantidade"].median().reset_index()
+    return (
+        sub.groupby(["nome_classe", "mes_compra"])["quantidade"]
+        .median()
+        .reset_index()
+    )
 
 
 def grafico_sazonalidade_h3(sazonalidade_h3):
     """
-    Gera um gráfico de barras com a quantidade mediana comprada por mês
-    (hipótese H3).
+    Gera um heatmap de quantidade mediana comprada por mês x classe de
+    material (hipótese H3), com a escala de cor normalizada por linha (por
+    classe), não global.
+
+    A normalização por linha existe porque, numa escala de cor global,
+    classes de menor volume ficam visualmente "escondidas" (quase uma única
+    cor), dominadas pelas classes de maior volume — normalizando cada linha
+    pelo próprio pico, o padrão sazonal de cada classe fica visível
+    independente do volume absoluto que ela movimenta. O valor real
+    (quantidade mediana, não normalizado) aparece no hover.
 
     Responde às perguntas:
-    "Em quais meses a demanda por materiais elétricos é historicamente maior?"
+    "Em quais meses a demanda por materiais elétricos é historicamente
+    maior, e esse padrão muda dependendo da classe de material?"
 
     Parâmetros
     ----------
     sazonalidade_h3 : pd.DataFrame
-        Saída de calcular_sazonalidade_h3().
+        Saída de calcular_sazonalidade_h3() (colunas: nome_classe,
+        mes_compra, quantidade).
 
     Retorna
     -------
     fig : plotly.graph_objects.Figure
-        Gráfico de barras com a quantidade mediana por mês (nomes em pt-br).
+        Heatmap classe (eixo Y) x mês (eixo X, nomes em pt-br); cor =
+        intensidade relativa ao pico da própria classe (0 a 1).
     """
     nomes_mes = {1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
                  7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez"}
-    sazonalidade_h3 = sazonalidade_h3.copy()
-    sazonalidade_h3["mes"] = sazonalidade_h3["mes_compra"].map(nomes_mes)
-    fig = px.bar(
-        sazonalidade_h3, x="mes", y="quantidade",
-        labels={"mes": "Mês", "quantidade": "Quantidade mediana"},
-        title="Quantidade mediana comprada por mês (todas as classes)",
+
+    #1. Pivota para classe (linha) x mês (coluna) com a quantidade mediana
+    pivot = sazonalidade_h3.pivot(index="nome_classe", columns="mes_compra", values="quantidade")
+    pivot = pivot.reindex(columns=range(1, 13))
+    pivot.columns = [nomes_mes[m] for m in pivot.columns]
+
+    #2. Normalização por linha (por classe) — cada classe escalada pelo seu
+    # próprio pico, para classes de menor volume não ficarem escondidas
+    pivot_normalizado = pivot.div(pivot.max(axis=1), axis=0)
+
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot_normalizado.values,
+        x=pivot_normalizado.columns,
+        y=pivot_normalizado.index,
+        customdata=pivot.values,
+        hovertemplate="Classe: %{y}<br>Mês: %{x}<br>Quantidade mediana: %{customdata:,.1f}<extra></extra>",
+        colorscale="YlOrRd",
+        colorbar=dict(title="Intensidade<br>relativa"),
+    ))
+    fig.update_layout(
+        title="Sazonalidade de demanda por classe (escala normalizada por classe)",
+        xaxis_title="Mês",
+        yaxis_title="Classe de material",
     )
     return fig
 
@@ -916,6 +950,11 @@ with aba_recomendacoes:
     sazonalidade_h3 = calcular_sazonalidade_h3(df)
     fig_h3 = grafico_sazonalidade_h3(sazonalidade_h3)                                      # <- Função 8 - H3: sazonalidade
     st.plotly_chart(fig_h3, width="stretch")
+    st.caption(
+        "Cor normalizada por classe (0 a 1, relativa ao próprio pico da classe), não por uma "
+        "escala global — do contrário, classes de menor volume ficariam quase invisíveis ao lado "
+        "das de maior volume. O valor real (quantidade mediana) aparece ao passar o mouse."
+    )
 
     st.divider()
 

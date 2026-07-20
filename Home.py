@@ -27,7 +27,7 @@ st.set_page_config(page_title="Home", page_icon="⚡", layout="wide")
 base_dir = Path(__file__).parents[0]
 img_dir = base_dir / "assets" / "img"
 
-mapa_mental_img = img_dir / "mapa_mental.png"
+fluxo_img = img_dir / "fluxo.png"
 
 # ==================================
 # Páginas
@@ -36,11 +36,11 @@ mapa_mental_img = img_dir / "mapa_mental.png"
 def render_home() -> None:
     """
     Renderiza o conteúdo da página Home.
-    Exibe resumo do case, escopo dos dados e o mapa mental do projeto.
+    Exibe resumo do projeto, escopo dos dados e o fluxo do projeto.
     """
     st.title("Materiais Elétricos — Compras Públicas")
     st.caption(
-        "Case técnico — Analista de Data Analytics Sr. de Suprimentos, CPFL Energia"
+        "Projeto de portfólio em Data Analytics — apoio a decisões da área de Suprimentos"
     )
 
     st.divider()
@@ -70,10 +70,10 @@ def render_home() -> None:
     st.divider()
 
     st.markdown("## Fluxo do Projeto")
-    if mapa_mental_img.exists():
-        st.image(str(mapa_mental_img), width="stretch")
+    if fluxo_img.exists():
+        st.image(str(fluxo_img), width="stretch")
     else:
-        st.warning("Imagem do mapa mental não encontrada.")
+        st.warning("Imagem do fluxo do projeto não encontrada.")
 
 
 def build_navigation() -> st.navigation:
