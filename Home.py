@@ -68,7 +68,32 @@ def render_home() -> None:
     )
 
     st.divider()
+    
+    st.markdown("## Navegação das Abas do Dashboard")
+    st.markdown(
+        """
+        As abas que compõem o dashboard ao navegar são:
 
+        1. **Visão Geral:** Focada em consumo agregado, evolução temporal e os principais fornecedores e classes de material.
+            - **Métricas Chave:** Valor total, nº de compras, fornecedores únicos, UASGs únicas, ticket médio.
+            - **Gráficos:** Série temporal (mensal/trimestral), Top 10 fornecedores por valor, Top 10 classes, tabela detalhada filtrável por período/estado/classe/fornecedor.
+        
+        ---
+        
+        2. **Projeção de Consumo:** Focada no cenário de gasto esperado para o próximo ano civil, com a incerteza sempre visível.
+            - **Métricas Chave:** Total projetado com faixa de confiança de ±1 desvio padrão histórico por trimestre.
+            - **Gráficos:** Série histórica + projeção naive sazonal com banda de confiança, tabela de cenários (pior/base/melhor) por trimestre.
+
+        ---
+        
+        3. **Recomendações ao Departamento de Suprimentos:** Síntese executiva que consolida as 4 hipóteses de negócio validadas em ação recomendada.
+            - **Métricas Chave:** Tabela-resumo H1-H4 (achado estatístico + recomendação de ação).
+            - **Gráficos:** Um gráfico de apoio por hipótese — elasticidade preço x quantidade (H1), variabilidade por fornecedor x UASG (H2), sazonalidade mensal (H3), regularidade x concentração de fornecedor/HHI (H4).
+        """
+    )
+
+    st.divider()
+    
     st.markdown("## Fluxo do Projeto")
     if fluxo_img.exists():
         st.image(str(fluxo_img), width="stretch")
