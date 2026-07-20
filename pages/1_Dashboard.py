@@ -48,13 +48,17 @@ def projecao_naive_sazonal(serie_trimestral, n_trimestres=4):
     """
     Repete o valor do mesmo trimestre do ano anterior (método vencedor no
     backtest do notebook 03, seção 4.7: MAPE 15,5% vs. 51,4% do XGBoost).
+    Para trimestres além do 4º do horizonte, "ano anterior" já é um valor
+    projetado (não há dado real ainda) — a projeção encadeia sobre si mesma.
     Faixa de confiança = ±1 desvio padrão histórico da série completa.
     """
-    ultimos_4 = serie_trimestral.iloc[-4:]
+    serie_estendida = serie_trimestral.copy()
     datas_futuras = pd.date_range(
         serie_trimestral.index[-1] + pd.DateOffset(months=3), periods=n_trimestres, freq="QS"
     )
-    projecao = pd.Series(ultimos_4.values[:n_trimestres], index=datas_futuras)
+    for data in datas_futuras:
+        serie_estendida.loc[data] = serie_estendida.iloc[-4]
+    projecao = serie_estendida.loc[datas_futuras]
     desvio = serie_trimestral.std()
     return projecao, desvio
 
@@ -150,15 +154,6 @@ with col_b:
 st.divider()
 
 # ── Projeção ──────────────────────────────────────────────────────────────
-st.subheader("Projeção de consumo — próximos 4 trimestres")
-st.caption(
-    "Projeção calculada sobre a base completa (não respeita os filtros acima), pois a "
-    "metodologia foi validada no nível agregado do portfólio. Método: naive sazonal — "
-    "venceu o XGBoost no backtest 2026 (MAPE 15,5% vs. 51,4%). Faixa de confiança = ±1 "
-    "desvio padrão histórico. Metodologia completa e limitações em "
-    "notebooks/03_limpeza_eda.ipynb, seções 4.0–4.8."
-)
-
 serie_trimestral_full = (
     df.dropna(subset=["data_compra", "valor_total"])
     .set_index("data_compra")
@@ -170,7 +165,24 @@ fim_do_trimestre = serie_trimestral_full.index[-1] + pd.DateOffset(months=3) - p
 if data_max < fim_do_trimestre:
     serie_trimestral_full = serie_trimestral_full.iloc[:-1]
 
-projecao, desvio = projecao_naive_sazonal(serie_trimestral_full)
+# projeta o suficiente para cobrir o restante do ano corrente + o ano civil seguinte inteiro
+ano_seguinte = serie_trimestral_full.index[-1].year + 1
+n_trimestres_projecao = (4 - serie_trimestral_full.index[-1].quarter) + 4
+
+st.subheader(f"Projeção de consumo — ano civil {ano_seguinte}")
+st.caption(
+    "Projeção calculada sobre a base completa (não respeita os filtros acima), pois a "
+    "metodologia foi validada no nível agregado do portfólio. Método: naive sazonal — "
+    "venceu o XGBoost no backtest 2026 (MAPE 15,5% vs. 51,4%). Faixa de confiança = ±1 "
+    "desvio padrão histórico. Os 2 últimos trimestres do horizonte encadeiam sobre "
+    "trimestres já projetados (ainda não há dado real de referência para eles). "
+    "Metodologia completa e limitações em notebooks/03_limpeza_eda.ipynb, seções 4.0–4.8."
+)
+
+projecao, desvio = projecao_naive_sazonal(serie_trimestral_full, n_trimestres=n_trimestres_projecao)
+projecao_ano_seguinte = projecao[projecao.index.year == ano_seguinte]
+
+st.metric(f"Projeção total {ano_seguinte}", f"R$ {projecao_ano_seguinte.sum():,.0f}")
 
 fig_proj = go.Figure()
 fig_proj.add_trace(go.Scatter(
