@@ -18,8 +18,8 @@ Link para o projeto: https://eletricsupply.streamlit.app
 
 ### 🎯 Destaques
 - Construí um pipeline completo — extração via API pública, banco relacional em esquema estrela e dashboard de 3 abas — sobre **164.680 registros** de compras públicas de materiais elétricos (2021–2026), dando à área de Suprimentos autoatendimento analítico em minutos.
-- Validei **4 hipóteses de negócio** com testes não-paramétricos, incluindo um achado contra-intuitivo: itens de consumo irregular têm **maior**, não menor, concentração de fornecedor (ρ=-0,451, p≈8,3e-198) — um proxy real de risco de ruptura de suprimento.
-- Comparei 6 métodos de projeção de consumo em backtest real contra dados de 2026: o método mais simples (naive sazonal) venceu o XGBoost por larga margem (**MAPE 15,5% vs. 51,4%**), decisão de modelo orientada por evidência, não por complexidade.
+- Validei **4 hipóteses de negócio** com testes não-paramétricos, incluindo um achado contra-intuitivo: itens de consumo irregular têm **maior**, não menor, concentração de fornecedor (ρ=-0,458, p≈4,5e-205) — um proxy real de risco de ruptura de suprimento.
+- Comparei métodos de projeção de consumo em backtest real contra dados de 2026: o método mais simples (naive sazonal) venceu o XGBoost (**MAPE 17,6% vs. 20,0%**), decisão de modelo orientada pela navalha de Occam entre resultados equivalentes, não por complexidade.
 
 ---
 
@@ -73,7 +73,7 @@ A solução foi estruturada seguindo a metodologia **CRISP-DS**, em 3 notebooks 
 
 2. **Projeção de Consumo**
 - Focada no cenário de gasto esperado para o próximo ano civil, com a incerteza sempre visível.
-- Métricas Chave: Total projetado (≈R$ 413 milhões para 2027), faixa de confiança de ±1 desvio padrão histórico por trimestre.
+- Métricas Chave: Total projetado (≈R$ 368,4 milhões para 2027), faixa de confiança de ±1 desvio padrão histórico por trimestre.
 - Gráficos: Série histórica + projeção naive sazonal com banda de confiança, tabela de cenários (pior/base/melhor) por trimestre.
 
 3. **Recomendações ao Departamento de Suprimentos**
@@ -85,16 +85,18 @@ A solução foi estruturada seguindo a metodologia **CRISP-DS**, em 3 notebooks 
 
 | Método | Complexidade | MAPE (backtest 2026) |
 |---|---|---|
-| **Naive Sazonal ✅** | 0 parâmetros | **15,5%** |
-| Holt-Winters | 3 parâmetros | 14,6% |
-| Média simples | 0 parâmetros | 22,6% |
-| Naive + tendência | 1 parâmetro | 25,4% |
-| Média móvel (4 trimestres) | 0 parâmetros | 46,3% |
-| XGBoost | 50 árvores | 51,4% |
+| **Naive Sazonal ✅** | 0 parâmetros | **17,6%** |
+| XGBoost | 50 árvores | 20,0% |
+| Holt-Winters* | 3 parâmetros | 14,6% |
+| Média simples* | 0 parâmetros | 22,6% |
+| Naive não-sazonal* | 0 parâmetros | 28,9% |
+| Média móvel (4 trimestres)* | 0 parâmetros | 46,3% |
 
-O **naive sazonal** (repete o valor do mesmo trimestre do ano anterior) foi escolhido em detrimento do XGBoost por vencer o backtest com folga — com apenas 13–17 trimestres de histórico, o XGBoost sofreu overfitting e teve o pior resultado entre todos os métodos testados. O Holt-Winters ficou estatisticamente próximo do naive (diferença de 0,9 p.p., não confiável com só 2 pontos de teste), mas exige 3 parâmetros ajustados — pela navalha de Occam, entre métodos com desempenho equivalente, o mais simples e interpretável venceu.
+\* Testados informalmente fora deste backtest, antes de uma limpeza de outliers de catalogação aplicada posteriormente à base — não foram recalculados, tratar como referência aproximada.
 
-A granularidade também foi decidida por evidência: agregação **mensal** foi descartada (CV=1,12, piora para 1,29 sem outliers — ruído estrutural de licitações públicas, não outliers pontuais) em favor da agregação **trimestral** (CV=0,58), que estabiliza a série o suficiente para um backtest confiável.
+O **naive sazonal** (repete o valor do mesmo trimestre do ano anterior) foi escolhido em detrimento do XGBoost, mas por margem pequena — 2,4 pontos percentuais de MAPE, calculados diretamente no backtest sobre a base limpa. Antes da limpeza de outliers essa diferença era muito maior (15,5% vs. 51,4%): o XGBoost estava sendo penalizado por outliers de preço que distorciam o treino; removidos, os dois métodos ficam próximos. Diante de um empate técnico com apenas 2 pontos de teste, a navalha de Occam decide: entre modelos equivalentes, o mais simples (zero parâmetros ajustados) e mais interpretável.
+
+A granularidade também foi decidida por evidência: agregação **mensal** foi descartada (CV=0,85, piora ligeiramente para 0,86 sem outliers — ruído estrutural de licitações públicas, não outliers pontuais) em favor da agregação **trimestral** (CV=0,49), que estabiliza a série o suficiente para um backtest confiável.
 
 ### Estrutura do Projeto
 
@@ -129,25 +131,25 @@ streamlit run Home.py
 
 ### 1. 📉 Comprar mais reduz o preço unitário — economia de escala confirmada
 
-**H1 confirmada** — regressão log-log entre quantidade e preço unitário mostra relação negativa robusta (slope=-0,489, r²=0,274, p<0,001, n=153.645). Suprimentos pode usar isso de forma direta: consolidar compras de itens recorrentes entre UASGs via atas compartilhadas gera ganho de escala mensurável.
+**H1 confirmada** — regressão log-log entre quantidade e preço unitário mostra relação negativa robusta (slope=-0,487, r²=0,274, p<0,001, n=153.598). Suprimentos pode usar isso de forma direta: consolidar compras de itens recorrentes entre UASGs via atas compartilhadas gera ganho de escala mensurável.
 
 ---
 
 ### 2. 🏭 A variabilidade de preço está mais ligada ao fornecedor do que à unidade compradora — mas o efeito é pequeno
 
-**H2 confirmada, efeito pequeno** — o coeficiente de variação de preço é maior entre fornecedores (mediana 0,261) do que entre UASGs (mediana 0,243), diferença estatisticamente significativa (p=0,0096) mas de baixa magnitude. Direciona esforço de negociação para o fornecedor, mas não justifica uma reestruturação de compras baseada só nesse achado.
+**H2 confirmada, efeito pequeno** — o coeficiente de variação de preço é maior entre fornecedores (mediana 0,260) do que entre UASGs (mediana 0,243), diferença estatisticamente significativa (p=0,0107) mas de baixa magnitude. Direciona esforço de negociação para o fornecedor, mas não justifica uma reestruturação de compras baseada só nesse achado.
 
 ---
 
 ### 3. 📅 A quantidade comprada varia fortemente ao longo do ano — o preço, não
 
-**H3 parcialmente confirmada** — a quantidade comprada por mês varia de forma fortemente significativa (Kruskal-Wallis H=706,3, p≈2,4e-144), concentrada no início do ano civil. Já a sazonalidade de preço, embora estatisticamente significativa, não tem um padrão prático interpretável — decisão consciente de não superinterpretar esse segundo resultado.
+**H3 parcialmente confirmada** — a quantidade comprada por mês varia de forma fortemente significativa (Kruskal-Wallis H=708,8, p≈7,1e-145), concentrada no início do ano civil. Já a sazonalidade de preço, embora estatisticamente significativa, não tem um padrão prático interpretável — decisão consciente de não superinterpretar esse segundo resultado.
 
 ---
 
 ### 4. ⚠️ Itens comprados de forma irregular têm MAIS dependência de fornecedor, não menos
 
-**H4 confirmada, contra-intuitivo** — usando um índice de regularidade de consumo (monotonia = média/desvio padrão do gasto mensal, conceito adaptado da Ciência do Esporte) cruzado com o Herfindahl-Hirschman Index (HHI) de concentração de fornecedor por item, encontrei correlação negativa forte (ρ=-0,451, p≈8,3e-198, n=3.970): quanto mais esporádica e imprevisível a compra de um item, maior a concentração em poucos fornecedores dispostos a atendê-la. Vira recomendação direta de qualificar fornecedores alternativos para esses itens.
+**H4 confirmada, contra-intuitivo** — usando um índice de regularidade de consumo (monotonia = média/desvio padrão do gasto mensal, conceito adaptado da Ciência do Esporte) cruzado com o Herfindahl-Hirschman Index (HHI) de concentração de fornecedor por item, encontrei correlação negativa forte (ρ=-0,458, p≈4,5e-205, n=3.970): quanto mais esporádica e imprevisível a compra de um item, maior a concentração em poucos fornecedores dispostos a atendê-la. Vira recomendação direta de qualificar fornecedores alternativos para esses itens.
 
 ---
 
@@ -163,15 +165,15 @@ O dashboard substituiu a consulta manual e pontual ao histórico de compras por 
 
 ### Projeção de Consumo — Ano Civil de 2027
 
-Método de produção: **naive sazonal**, com faixa de confiança heurística de ±1 desvio padrão histórico (≈ R$ 64,3 milhões por trimestre).
+Método de produção: **naive sazonal**, com faixa de confiança heurística de ±1 desvio padrão histórico (≈ R$ 48,2 milhões por trimestre).
 
 | Trimestre | Valor projetado |
 |---|---|
-| Jan–Mar/27 | R$ 75,3 milhões |
-| Abr–Jun/27 | R$ 72,1 milhões |
-| Jul–Set/27 | R$ 150,4 milhões |
-| Out–Dez/27 | R$ 115,6 milhões |
-| **Total 2027** | **≈ R$ 413 milhões** |
+| Jan–Mar/27 | R$ 70,3 milhões |
+| Abr–Jun/27 | R$ 71,1 milhões |
+| Jul–Set/27 | R$ 137,1 milhões |
+| Out–Dez/27 | R$ 89,9 milhões |
+| **Total 2027** | **≈ R$ 368,4 milhões** |
 
 ---
 
