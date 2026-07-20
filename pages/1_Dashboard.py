@@ -21,7 +21,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from scipy.stats import linregress
+from scipy.stats import linregress, zscore
 
 #==================================
 # Configuration Page
@@ -34,6 +34,35 @@ CAMINHO_BANCO = Path(__file__).parents[1] / "assets" / "data" / "database.db"
 #===================================
 # Functions
 #===================================
+
+def outlier_iqr(g, k=3):
+    """
+    Identifica outliers em uma série numérica pelo método do IQR — mesma
+    função usada no notebook 03 (seção 2.3.3, célula de Helper Functions),
+    replicada aqui para que o recálculo de H1 no dashboard aplique o mesmo
+    filtro de outlier da análise validada.
+
+    Responde às perguntas:
+    "Este ponto deve ser tratado como outlier ao recalcular a elasticidade
+    preço-quantidade por classe?"
+
+    Parâmetros
+    ----------
+    g : pd.Series
+        Série numérica ou grupo de dados (uso típico via
+        groupby().transform() para isolar anomalias por item).
+    k : float, opcional (padrão=3)
+        Multiplicador do IQR. k=3 identifica outliers extremos.
+
+    Retorna
+    -------
+    pd.Series
+        Booleana (True = outlier), mesmo tamanho e índice do input.
+    """
+    q1, q3 = g.quantile([0.25, 0.75])
+    iqr = q3 - q1
+    return (g < q1 - k * iqr) | (g > q3 + k * iqr)
+
 
 @st.cache_data
 def carregar_dados():
@@ -400,12 +429,19 @@ def calcular_elasticidade_por_classe(df, classes_top):
     -------
     pd.DataFrame
         Uma linha por classe, com a elasticidade (slope) ordenada de forma
-        crescente — mais negativo = desconto por volume mais forte.
+        crescente — mais negativo = desconto por volume mais forte. Já
+        exclui outliers de preço/quantidade (IQR k=3 por item, mesmo filtro
+        do notebook seção 2.3.3), via outlier_iqr().
     """
     freq_item = df.groupby("codigo_item_catalogo")["id_compra_item"].transform("count")
     sub = df[(freq_item >= 10) & (df["nome_classe"].isin(classes_top))].dropna(
         subset=["quantidade", "preco_unitario", "nome_classe"]
-    )
+    ).copy()
+
+    # mesmo filtro de outlier do notebook (seção 2.3.3): IQR k=3, por item
+    outlier_preco = sub.groupby("codigo_item_catalogo")["preco_unitario"].transform(outlier_iqr)
+    outlier_quantidade = sub.groupby("codigo_item_catalogo")["quantidade"].transform(outlier_iqr)
+    sub = sub[~(outlier_preco | outlier_quantidade)]
 
     linhas = []
     for classe, grupo in sub.groupby("nome_classe"):
@@ -568,13 +604,15 @@ def grafico_sazonalidade_h3(sazonalidade_h3):
 @st.cache_data
 def calcular_hhi_por_quartil_h4(df):
     """
-    Calcula o HHI médio (concentração de fornecedor) por quartil de
-    regularidade de consumo — mesma lógica da hipótese H4, resumida em 4
-    quartis em vez do scatter item a item.
+    Calcula o HHI médio (concentração de fornecedor) por quartil do índice
+    de dependência (`indice_dependencia_v2`) — mesma fórmula da hipótese H4
+    no notebook (seção 2.3.4): regularidade de consumo e gasto total do
+    item, cada um em z-score, somados. Resumido em 4 quartis em vez do
+    scatter item a item da seção 5.4.
 
     Responde às perguntas:
-    "Itens de consumo mais regular têm menos fornecedores concentrados, ou
-    o índice de regularidade é independente da concentração de mercado?"
+    "Itens de consumo mais regular (e de maior gasto) têm menos fornecedores
+    concentrados, ou o índice é independente da concentração de mercado?"
     "Quais itens são bons candidatos a Ata de Registro de Preços com base na
     previsibilidade do consumo?"
 
@@ -586,17 +624,30 @@ def calcular_hhi_por_quartil_h4(df):
     Retorna
     -------
     pd.DataFrame
-        Uma linha por quartil de regularidade de consumo, com o HHI médio.
+        Uma linha por quartil de indice_dependencia_v2, com o HHI médio.
     """
     valor_mensal_item = df.dropna(subset=["data_compra"]).groupby(
         ["codigo_item_catalogo", pd.Grouper(key="data_compra", freq="ME")]
     )["valor_total"].sum()
 
-    regularidade = valor_mensal_item.groupby("codigo_item_catalogo").apply(
+    regularidade_consumo = valor_mensal_item.groupby("codigo_item_catalogo").apply(
         lambda x: x.mean() / x.std() if x.std() > 0 else np.nan
     )
+    gasto_total_item = valor_mensal_item.groupby("codigo_item_catalogo").sum()
     n_meses = valor_mensal_item.groupby("codigo_item_catalogo").count()
-    regularidade = regularidade[n_meses >= 6].dropna()
+
+    df_regularidade = pd.DataFrame({
+        "regularidade_consumo": regularidade_consumo,
+        "gasto_total": gasto_total_item,
+        "n_meses": n_meses,
+    }).query("n_meses >= 6").dropna(subset=["regularidade_consumo"])
+
+    # mesma combinação do notebook (seção 2.3.4): regularidade e gasto total
+    # em z-score, para que nenhuma das duas dimensões domine pela escala.
+    df_regularidade["indice_dependencia_v2"] = (
+        zscore(df_regularidade["regularidade_consumo"])
+        + zscore(np.log1p(df_regularidade["gasto_total"]))
+    )
 
     participacao_sq = (
         df.dropna(subset=["codigo_item_catalogo", "ni_fornecedor", "valor_total"])
@@ -605,9 +656,9 @@ def calcular_hhi_por_quartil_h4(df):
     )
     hhi_item = participacao_sq.groupby("codigo_item_catalogo").sum().rename("hhi")
 
-    df_q = pd.DataFrame({"regularidade_consumo": regularidade}).join(hhi_item).dropna()
+    df_q = df_regularidade[["indice_dependencia_v2"]].join(hhi_item).dropna()
     df_q["quartil"] = pd.qcut(
-        df_q["regularidade_consumo"], 4,
+        df_q["indice_dependencia_v2"], 4,
         labels=["Q1 (menos regular)", "Q2", "Q3", "Q4 (mais regular)"],
     )
     return df_q.groupby("quartil", observed=True)["hhi"].mean().reset_index()
@@ -634,8 +685,8 @@ def grafico_hhi_h4(hhi_quartis_h4):
     """
     fig = px.bar(
         hhi_quartis_h4, x="quartil", y="hhi",
-        labels={"quartil": "Quartil de regularidade de consumo", "hhi": "HHI médio (concentração de fornecedor)"},
-        title="Concentração de fornecedor (HHI) por quartil de regularidade de consumo",
+        labels={"quartil": "Quartil do índice de dependência (regularidade + gasto)", "hhi": "HHI médio (concentração de fornecedor)"},
+        title="Concentração de fornecedor (HHI) por quartil do índice de dependência (indice_dependencia_v2)",
     )
     return fig
 
@@ -819,13 +870,14 @@ with aba_recomendacoes:
     fig_h1 = grafico_elasticidade_h1(elasticidade_classe)                                  # <- Função 6 - H1: elasticidade preço-quantidade
     st.plotly_chart(fig_h1, width="stretch")
     st.caption(
-        "Verificação de robustez a outliers (IQR k=3 por item, seção 2.3.3 do notebook): "
-        "removendo os pontos extremos de preço/quantidade já identificados, o slope muda pouco "
-        "em qualquer recorte — ex. Transformadores para Estação de Força e Distribuição: "
-        "slope -0,672→-0,667, r²=0,504→0,515 (n=678→579). No agregado (todas as classes), "
-        "slope -0,489→-0,480, r²=0,274→0,234 (n=153.645→133.411). A elasticidade é calculada em "
-        "escala log(quantidade) x log(preço), o que já comprime a cauda extrema — por isso a "
-        "conclusão de H1 não depende de poucas compras de volume muito alto."
+        "Este gráfico já aplica o mesmo filtro de outlier do notebook (IQR k=3 por item, "
+        "seção 2.3.3) antes de calcular a elasticidade por classe. Efeito de remover esses "
+        "outliers, para referência (seção 2.3.3 do notebook): no exemplo de maior efeito por "
+        "classe, Transformadores para Estação de Força e Distribuição, slope -0,672→-0,667, "
+        "r²=0,504→0,515 (n=678→579); no agregado (todas as classes), slope -0,489→-0,480, "
+        "r²=0,274→0,234 (n=153.645→133.411). A elasticidade é calculada em escala "
+        "log(quantidade) x log(preço), o que já comprime a cauda extrema — por isso a conclusão "
+        "de H1 não depende de poucas compras de volume muito alto."
     )
 
     st.divider()
@@ -883,10 +935,12 @@ with aba_recomendacoes:
     fig_h4 = grafico_hhi_h4(hhi_quartis_h4)                                                # <- Função 9 - H4: HHI por regularidade
     st.plotly_chart(fig_h4, width="stretch")
     st.caption(
-        "Atenção — este é o achado mais sensível a outliers dos quatro: `regularidade_consumo` é "
-        "uma razão média/desvio padrão do valor mensal por item, e um único mês atípico (ex. uma "
-        "licitação isolada de grande volume) infla o desvio padrão e derruba artificialmente o "
-        "índice, fazendo um item de consumo estável parecer 'irregular'. Diferente de H2/H3, que "
-        "usam mediana e testes de rank (robustos por construção), aqui vale checar manualmente o "
-        "histórico mensal antes de descartar um item como candidato a Ata de Registro de Preços."
+        "Atenção — este é o achado mais sensível a outliers dos quatro: o componente de "
+        "regularidade do `indice_dependencia_v2` é uma razão média/desvio padrão do valor mensal "
+        "por item, e um único mês atípico (ex. uma licitação isolada de grande volume) infla o "
+        "desvio padrão e derruba artificialmente esse componente, fazendo um item de consumo "
+        "estável parecer 'irregular' — o componente de gasto total (em log) amortece parte do "
+        "efeito, mas não o elimina. Diferente de H2/H3, que usam mediana e testes de rank "
+        "(robustos por construção), aqui vale checar manualmente o histórico mensal antes de "
+        "descartar um item como candidato a Ata de Registro de Preços."
     )
