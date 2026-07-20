@@ -6,7 +6,7 @@ notebooks 02_extracao_e_bd.ipynb e 03_limpeza_eda.ipynb. Não recalcula
 hipóteses/EDA — isso vive nos notebooks. Este app cobre o requisito de
 "visualização que permita acompanhar e explorar as informações obtidas".
 
-Rodar com: streamlit run app.py
+Acessado via navegação a partir de Home.py — rodar com: streamlit run Home.py
 """
 
 import sqlite3
@@ -17,9 +17,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(page_title="Materiais Elétricos — Compras.gov.br", layout="wide")
-
-CAMINHO_BANCO = Path(__file__).parent / "assets" / "data" / "database.db"
+CAMINHO_BANCO = Path(__file__).parents[1] / "assets" / "data" / "database.db"
 
 
 @st.cache_data
