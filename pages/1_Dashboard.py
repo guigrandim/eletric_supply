@@ -64,6 +64,31 @@ def outlier_iqr(g, k=3):
     return (g < q1 - k * iqr) | (g > q3 + k * iqr)
 
 
+def formatar_valor_compacto(valor):
+    """
+    Formata um valor em reais de forma compacta (mil/mi/bi), evitando que
+    números grandes estourem a largura dos cards de métrica em layouts com
+    várias colunas lado a lado.
+
+    Parâmetros
+    ----------
+    valor : float
+        Valor em reais a ser formatado.
+
+    Retorna
+    -------
+    str
+        Valor formatado, ex. "R$ 2,11 mi", "R$ 413,00 mi", "R$ 8.200".
+    """
+    if abs(valor) >= 1_000_000_000:
+        return f"R$ {valor / 1_000_000_000:,.2f} bi"
+    if abs(valor) >= 1_000_000:
+        return f"R$ {valor / 1_000_000:,.2f} mi"
+    if abs(valor) >= 1_000:
+        return f"R$ {valor / 1_000:,.2f} mil"
+    return f"R$ {valor:,.0f}"
+
+
 @st.cache_data
 def carregar_dados():
     """
@@ -104,6 +129,37 @@ def carregar_dados():
 
     df["data_compra"] = pd.to_datetime(df["data_compra"], errors="coerce")
     df["valor_total"] = df["quantidade"] * df["preco_unitario"]
+
+    # Erro de dado pontual: 4 lançamentos de "ISOLADOR EPOXI" (código 77127) em
+    # 03/12/2021, fornecedor Sartorius (fabricante de equipamento de
+    # laboratório) para o Instituto de Tecnologia em Imunobiológicos, a
+    # R$30-31 milhões/unidade — as outras 69 compras do mesmo item no resto
+    # da base custam entre R$4,49 e R$2.720,00. Fornecedor e comprador não
+    # combinam com o item (isolador elétrico), indicando erro de
+    # classificação/preço no catálogo, não uma compra real. Sozinhas, essas 4
+    # linhas somam ~R$123 milhões e distorcem a série temporal e a projeção.
+    df = df[~((df["codigo_item_catalogo"] == 77127) & (df["preco_unitario"] > 1_000_000))]
+
+    # Erro sistemático (mesma lógica documentada no notebook 03, seção 1.9):
+    # itens comuns (cabo, fio, eletroduto, chave elétrica) vendidos a preço de
+    # equipamento pesado. Três filtros combinados, nenhum sozinho é
+    # suficiente: (1) preço > R$500 mil (mesmo piso da seção 1.8, evita marcar
+    # itens baratíssimos cuja razão explode sem magnitude real); (2) preço >=
+    # 1.000x a mediana do próprio item (isola o item incompatível com o que
+    # ele normalmente custa); (3) comprador não é uma grande concessionária/
+    # geradora (CHESF, FURNAS, Eletronorte, EPE compram equipamento de
+    # subestação legitimamente nessa faixa, mesmo sob código genérico
+    # compartilhado com itens baratos). Preserva a variação real de preço na
+    # série temporal dos dois lados, em vez de só cortar tudo acima de um teto.
+    grandes_concessionarias = ["CHESF", "FURNAS", "ELETRONORTE", "CENTRAIS ELETRICAS DO NORTE", "EPE-CIA"]
+    eh_grande_concessionaria = df["nome_uasg"].str.contains("|".join(grandes_concessionarias), case=False, na=False)
+    mediana_por_item = df.groupby("codigo_item_catalogo")["preco_unitario"].transform("median")
+    razao_mediana_item = df["preco_unitario"] / mediana_por_item
+    outlier_preco_incompativel = (
+        (df["preco_unitario"] > 500_000) & (razao_mediana_item >= 1000) & (~eh_grande_concessionaria)
+    )
+    df = df[~outlier_preco_incompativel]
+
     return df
 
 
@@ -211,10 +267,11 @@ def grafico_top_fornecedores(df_filtrado, top_n=10):
     top_fornecedores = (
         df_filtrado.groupby("nome_fornecedor")["valor_total"].sum()
         .sort_values(ascending=True).tail(top_n)
+        .reset_index()
     )
     fig = px.bar(
-        top_fornecedores, orientation="h",
-        labels={"value": "Valor total (R$)", "nome_fornecedor": ""},
+        top_fornecedores, x="valor_total", y="nome_fornecedor", orientation="h",
+        labels={"valor_total": "Valor total (R$)", "nome_fornecedor": ""},
     )
     return fig
 
@@ -243,10 +300,11 @@ def grafico_top_classes(df_filtrado, top_n=10):
     top_classes = (
         df_filtrado.groupby("nome_classe")["valor_total"].sum()
         .sort_values(ascending=True).tail(top_n)
+        .reset_index()
     )
     fig = px.bar(
-        top_classes, orientation="h",
-        labels={"value": "Valor total (R$)", "nome_classe": ""},
+        top_classes, x="valor_total", y="nome_classe", orientation="h",
+        labels={"valor_total": "Valor total (R$)", "nome_classe": ""},
     )
     return fig
 
@@ -300,7 +358,7 @@ def projecao_naive_sazonal(serie_trimestral, n_trimestres=4):
     """
     Projeta valores futuros repetindo o valor do mesmo trimestre do ano
     anterior — método vencedor no backtest do notebook 03 (seção 4.7): MAPE
-    15,5% vs. 51,4% do XGBoost.
+    17,6% vs. 20,0% do XGBoost.
 
     Responde às perguntas:
     "Quanto a área de Suprimentos deve esperar gastar nos próximos
@@ -409,9 +467,10 @@ def tabela_cenarios_projecao(projecao, desvio):
 @st.cache_data
 def calcular_elasticidade_por_classe(df, classes_top):
     """
-    Calcula o slope log-log entre quantidade e preço unitário (elasticidade
-    preço-quantidade), uma regressão por classe de material — mesma
-    regressão da hipótese H1, segmentada por classe.
+    Calcula, por classe de material, quanto o preço unitário cai (%) quando a
+    quantidade comprada de um item dobra. Deriva dessa mesma regressão
+    log-log da hipótese H1 (elasticidade preço-quantidade), mas convertida
+    para uma grandeza interpretável por um time não técnico.
 
     Responde às perguntas:
     "A economia de escala (desconto por volume) é uniforme entre classes de
@@ -428,8 +487,9 @@ def calcular_elasticidade_por_classe(df, classes_top):
     Retorna
     -------
     pd.DataFrame
-        Uma linha por classe, com a elasticidade (slope) ordenada de forma
-        crescente — mais negativo = desconto por volume mais forte. Já
+        Uma linha por classe, com "desconto_dobro_pct" (queda percentual no
+        preço unitário ao dobrar a quantidade comprada) ordenada de forma
+        decrescente — maior valor = desconto por volume mais forte. Já
         exclui outliers de preço/quantidade (IQR k=3 por item, mesmo filtro
         do notebook seção 2.3.3), via outlier_iqr().
     """
@@ -448,19 +508,21 @@ def calcular_elasticidade_por_classe(df, classes_top):
         x = np.log1p(grupo["quantidade"])
         y = np.log1p(grupo["preco_unitario"])
         slope, *_ = linregress(x, y)
-        linhas.append({"nome_classe": classe, "elasticidade": slope})
+        desconto_dobro_pct = (1 - 2 ** slope) * 100
+        linhas.append({"nome_classe": classe, "desconto_dobro_pct": desconto_dobro_pct})
 
-    return pd.DataFrame(linhas).sort_values("elasticidade").reset_index(drop=True)
+    return pd.DataFrame(linhas).sort_values("desconto_dobro_pct", ascending=False).reset_index(drop=True)
 
 
 def grafico_elasticidade_h1(elasticidade_classe):
     """
-    Gera um gráfico de barras horizontais com a elasticidade preço-quantidade
-    por classe de material (hipótese H1).
+    Gera um gráfico de barras horizontais com a queda percentual no preço
+    unitário ao dobrar a quantidade comprada, por classe de material
+    (hipótese H1).
 
     Responde às perguntas:
     "Em quais classes de material a economia de escala é mais forte?"
-    "Existe alguma classe sem desconto por volume (elasticidade não negativa)?"
+    "Existe alguma classe sem desconto por volume?"
 
     Parâmetros
     ----------
@@ -470,13 +532,19 @@ def grafico_elasticidade_h1(elasticidade_classe):
     Retorna
     -------
     fig : plotly.graph_objects.Figure
-        Gráfico de barras horizontais com linha de referência em zero.
+        Gráfico de barras horizontais com linha de referência em zero e o
+        valor percentual escrito ao lado de cada barra.
     """
     fig = px.bar(
-        elasticidade_classe, x="elasticidade", y="nome_classe", orientation="h",
-        labels={"elasticidade": "Elasticidade média preço-quantidade (slope log-log)", "nome_classe": ""},
-        title="Elasticidade preço-quantidade por classe (top 6 por valor) — negativo = desconto por volume",
+        elasticidade_classe, x="desconto_dobro_pct", y="nome_classe", orientation="h",
+        labels={
+            "desconto_dobro_pct": "Queda no preço unitário ao dobrar a quantidade comprada (%)",
+            "nome_classe": "",
+        },
+        title="Quanto o preço unitário cai ao dobrar o pedido, por classe (top 6 por valor)",
+        text="desconto_dobro_pct",
     )
+    fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
     fig.add_vline(x=0, line_dash="dash", line_color="red")
     return fig
 
@@ -515,8 +583,11 @@ def calcular_cv_h2(df):
 
 def grafico_cv_h2(cv_fornecedor, cv_uasg):
     """
-    Gera um gráfico de barras comparando o CV mediano do preço unitário
-    entre fornecedores e entre UASGs (hipótese H2).
+    Gera um boxplot comparando a distribuição do CV do preço unitário entre
+    fornecedores e entre UASGs (hipótese H2) — mesmo gráfico do notebook
+    (seção 3.2), que mostra a dispersão completa das duas distribuições em
+    vez de só a mediana, deixando mais claro visualmente qual grupo tem mais
+    variabilidade de preço.
 
     Responde às perguntas:
     "Qual das duas dimensões (fornecedor ou UASG) explica mais variabilidade
@@ -532,15 +603,27 @@ def grafico_cv_h2(cv_fornecedor, cv_uasg):
     Retorna
     -------
     fig : plotly.graph_objects.Figure
-        Gráfico de barras com o CV mediano de cada grupo.
+        Boxplot com uma caixa por grupo, sem outliers — mesmo critério do
+        notebook (`showfliers=False`, cerca de 1,5×IQR acima do 3º
+        quartil). Diferente do matplotlib, o boxplot do Plotly com
+        `points=False` não limita sozinho o whisker a essa cerca — ele
+        estica até o mínimo/máximo real dos dados, então os pontos além da
+        cerca são removidos aqui antes de plotar, replicando o
+        comportamento do notebook.
     """
-    cv_medianas = pd.DataFrame({
-        "Grupo": ["Por Fornecedor", "Por UASG"],
-        "CV mediano do preço": [cv_fornecedor.median(), cv_uasg.median()],
-    })
-    fig = px.bar(
-        cv_medianas, x="Grupo", y="CV mediano do preço", text_auto=".3f",
-        title="Coeficiente de variação mediano do preço — Fornecedor vs. UASG",
+    def sem_outliers(serie):
+        q1, q3 = serie.quantile(0.25), serie.quantile(0.75)
+        limite = q3 + 1.5 * (q3 - q1)
+        return serie[serie <= limite]
+
+    dados = pd.concat([
+        pd.DataFrame({"Grupo": "Por Fornecedor", "CV do preço": sem_outliers(cv_fornecedor).values}),
+        pd.DataFrame({"Grupo": "Por UASG", "CV do preço": sem_outliers(cv_uasg).values}),
+    ], ignore_index=True)
+    fig = px.box(
+        dados, x="Grupo", y="CV do preço", points=False,
+        labels={"CV do preço": "Coeficiente de variação do preço unitário", "Grupo": ""},
+        title="Variabilidade de preço do mesmo item — Fornecedor vs. UASG",
     )
     return fig
 
@@ -695,17 +778,26 @@ def calcular_hhi_por_quartil_h4(df):
         df_q["indice_dependencia_v2"], 4,
         labels=["Q1 (menos regular)", "Q2", "Q3", "Q4 (mais regular)"],
     )
-    return df_q.groupby("quartil", observed=True)["hhi"].mean().reset_index()
+    resultado = df_q.groupby("quartil", observed=True)["hhi"].mean().reset_index()
+    # HHI (0-1) não é intuitivo fora de quem já conhece a métrica; convertido
+    # para "número efetivo de fornecedores" (1/HHI) — ex. HHI=0,5 equivale a
+    # 2 fornecedores dividindo o mercado igualmente — grandeza que qualquer
+    # pessoa do time de Suprimentos lê diretamente como "quantos fornecedores
+    # de fato disputam esse item".
+    resultado["fornecedores_efetivos"] = 1 / resultado["hhi"]
+    return resultado
 
 
 def grafico_hhi_h4(hhi_quartis_h4):
     """
-    Gera um gráfico de barras com a concentração de fornecedor (HHI) por
-    quartil de regularidade de consumo (hipótese H4).
+    Gera um gráfico de barras com o número efetivo de fornecedores (1/HHI)
+    por quartil de regularidade de consumo (hipótese H4) — quanto mais
+    regular o consumo do item, mais fornecedores efetivamente concorrem por
+    ele, sustentando visualmente o insight de H4.
 
     Responde às perguntas:
-    "A concentração de fornecedor aumenta conforme o consumo de um item é
-    menos regular?"
+    "Itens de consumo mais regular têm mais fornecedores concorrendo, ou o
+    número de fornecedores é parecido independente da regularidade?"
 
     Parâmetros
     ----------
@@ -715,12 +807,16 @@ def grafico_hhi_h4(hhi_quartis_h4):
     Retorna
     -------
     fig : plotly.graph_objects.Figure
-        Gráfico de barras com o HHI médio por quartil de regularidade.
+        Gráfico de barras com o número efetivo de fornecedores por quartil
+        de regularidade, do menos ao mais regular.
     """
     fig = px.bar(
-        hhi_quartis_h4, x="quartil", y="hhi",
-        labels={"quartil": "Quartil do índice de dependência (regularidade + gasto)", "hhi": "HHI médio (concentração de fornecedor)"},
-        title="Concentração de fornecedor (HHI) por quartil do índice de dependência (indice_dependencia_v2)",
+        hhi_quartis_h4, x="quartil", y="fornecedores_efetivos", text_auto=".1f",
+        labels={
+            "quartil": "Regularidade de consumo do item",
+            "fornecedores_efetivos": "Número efetivo de fornecedores concorrendo",
+        },
+        title="Quanto mais regular o consumo, mais fornecedores concorrem pelo item",
     )
     return fig
 
@@ -755,17 +851,17 @@ st.caption(
 
 #Create Tabs In Page
 aba_visao_geral, aba_projecao, aba_recomendacoes = st.tabs(
-    ["Visão Geral", "Projeção de consumo", "Recomendações ao Departamento de Suprimentos"]
+    ["Visão Geral", "Projeção de Consumo", "Recomendações ao Departamento de Suprimentos"]
 )
 
 with aba_visao_geral:
     # ── KPIs ─────────────────────────────────────────────────────────────
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Valor total", f"R$ {df_filtrado['valor_total'].sum():,.0f}")
+    col1.metric("Valor total", formatar_valor_compacto(df_filtrado['valor_total'].sum()))
     col2.metric("Compras", f"{len(df_filtrado):,}")
     col3.metric("Fornecedores únicos", f"{df_filtrado['ni_fornecedor'].nunique():,}")
     col4.metric("UASGs únicas", f"{df_filtrado['codigo_uasg'].nunique():,}")
-    col5.metric("Ticket médio", f"R$ {df_filtrado['valor_total'].mean():,.2f}")
+    col5.metric("Ticket médio", formatar_valor_compacto(df_filtrado['valor_total'].mean()))
 
     st.divider()
 
@@ -811,11 +907,8 @@ with aba_projecao:
 
     st.subheader(f"Projeção de consumo — ano civil {ano_seguinte}")
     st.caption(
-        "Projeção calculada sobre a base completa (não respeita os filtros acima), pois a "
-        "metodologia foi validada no nível agregado do portfólio. Método: naive sazonal — "
-        "venceu o XGBoost no backtest 2026 (MAPE 15,5% vs. 51,4%). Faixa de confiança = ±1 "
-        "desvio padrão histórico. Os 2 últimos trimestres do horizonte encadeiam sobre "
-        "trimestres já projetados (ainda não há dado real de referência para eles). "
+        "Projeção calculada sobre a base completa (não respeita os filtros acima), "
+        "utilizando o método: naive sazonal — com MAPE de 17,6%.\n"
         "Metodologia completa e limitações em notebooks/03_limpeza_eda.ipynb, seções 4.0–4.8."
     )
 
@@ -851,82 +944,39 @@ with aba_recomendacoes:
     # ── Resumo executivo ─────────────────────────────────────────────────
     st.markdown("#### Resumo executivo")
     st.markdown(
-        "- **Escala de compra (H1):** consolidar pedidos reduz preço unitário (~0,49% por 1% de "
-        "quantidade a mais), mas explica só ~27% da variação de preço — é uma alavanca real, não "
-        "a única.\n"
-        "- **Fornecedor > região (H2):** negociar com fornecedores reduz mais a variabilidade de "
-        "preço do que centralizar compras por UASG/região, embora o efeito seja pequeno (~7%).\n"
-        "- **Sazonalidade (H3):** demanda se concentra no início do ano civil — antecipar "
-        "licitações reduz risco de desabastecimento; não há padrão de preço sazonal confiável "
-        "para tentar comprar mais barato num mês específico.\n"
-        "- **Regularidade de consumo (H4):** itens de consumo regular são bons candidatos a Ata "
-        "de Registro de Preços (mais fáceis de planejar/negociar), independente de quantos "
-        "fornecedores os atendem hoje.\n"
-        "- **Orçamento 2027:** projeção naive sazonal aponta ~R$ 413 milhões para o ano civil "
-        "seguinte (aba *Projeção de consumo*), faixa de confiança ±R$ 64,3 milhões/trimestre.\n\n"
-        "Todas as recomendações estão ancoradas em testes estatísticos formais (regressão OLS, "
-        "Mann-Whitney, Kruskal-Wallis, correlação de Spearman) documentados em "
-        "`notebooks/03_limpeza_eda.ipynb`, seção 5.0 — nenhuma extrapola além do que os números "
-        "sustentam."
+        "- **H1 — Economia de escala**\n"
+        "  - Achado: Preço unitário cai ~0,49% a cada 1% de aumento na quantidade (r²=0,27, p<0,001)\n"
+        "  - Recomendação: Consolidar pedidos entre UASGs para itens de alta recorrência\n"
+        "- **H2 — Fornecedor vs. UASG**\n"
+        "  - Achado: CV de preço maior entre fornecedores do que entre UASGs (0,260 vs. 0,243; p=0,0107)\n"
+        "  - Recomendação: Priorizar negociação com fornecedores sobre centralização regional\n"
+        "- **H3 — Sazonalidade**\n"
+        "  - Achado: Quantidade concentrada no início do ano civil (H=708,8, p<0,001)\n"
+        "  - Recomendação: Antecipar licitações antes da concentração de início de ano\n"
+        "- **H4 — Regularidade de consumo**\n"
+        "  - Achado: Menor regularidade de consumo → maior concentração de fornecedor (rho=-0,45, p<0,001)\n"
+        "  - Recomendação: Mapear os itens com menor índice de regularidade de consumo e priorizar a qualificação de fornecedores alternativos para esse grupo"
     )
-
-    tabela_resumo = pd.DataFrame({
-        "Hipótese": ["H1 — Economia de escala", "H2 — Fornecedor vs. UASG", "H3 — Sazonalidade", "H4 — Regularidade de consumo"],
-        "Achado": [
-            "Preço unitário cai ~0,49% a cada 1% de aumento na quantidade (r²=0,27, p<0,001)",
-            "CV de preço maior entre fornecedores do que entre UASGs (0,261 vs. 0,243; p=0,0096)",
-            "Quantidade concentrada no início do ano civil (H=706,3, p<0,001)",
-            "Menor regularidade de consumo → maior concentração de fornecedor (rho=-0,45, p<0,001)",
-        ],
-        "Recomendação": [
-            "Consolidar pedidos entre UASGs para itens de alta recorrência",
-            "Priorizar negociação com fornecedores sobre centralização regional",
-            "Antecipar licitações antes da concentração de início de ano",
-            "Usar regularidade para identificar candidatos a Ata de Registro de Preços",
-        ],
-    })
-    st.dataframe(tabela_resumo, width="stretch", hide_index=True)
 
     st.divider()
 
     # ── H1 — Economia na quantidade comprada ────────────────────────────
     st.markdown("### H1 — Economia na quantidade comprada")
     st.markdown(
-        "**Achado:** o preço unitário cai ~0,49% a cada 1% de aumento na quantidade comprada "
-        "do mesmo item (slope=-0,489, r²=0,274, p<0,001, n=153.645 transações).\n\n"
-        "**Recomendação:** para itens de alta recorrência, priorizar a consolidação de pedidos "
-        "entre UASGs (compras conjuntas / atas de registro de preço compartilhadas) em vez de "
-        "compras fracionadas por unidade. O ganho de escala é estatisticamente robusto, ainda "
-        "que o R² de 0,27 indique que quantidade explica só parte da variação de preço — a "
-        "decisão de compra não deve se basear apenas em volume."
+        "- **Insight:** Preço unitário cai ~0,49% a cada 1% de aumento na quantidade (r²=0,27, p<0,001)\n"
+        "- **Recomendação:** Consolidar pedidos entre UASGs para itens de alta recorrência"
     )
     elasticidade_classe = calcular_elasticidade_por_classe(df, top_classes_valor)
     fig_h1 = grafico_elasticidade_h1(elasticidade_classe)                                  # <- Função 6 - H1: elasticidade preço-quantidade
     st.plotly_chart(fig_h1, width="stretch")
-    st.caption(
-        "Este gráfico já aplica o mesmo filtro de outlier do notebook (IQR k=3 por item, "
-        "seção 2.3.3) antes de calcular a elasticidade por classe. Efeito de remover esses "
-        "outliers, para referência (seção 2.3.3 do notebook): no exemplo de maior efeito por "
-        "classe, Transformadores para Estação de Força e Distribuição, slope -0,672→-0,667, "
-        "r²=0,504→0,515 (n=678→579); no agregado (todas as classes), slope -0,489→-0,480, "
-        "r²=0,274→0,234 (n=153.645→133.411). A elasticidade é calculada em escala "
-        "log(quantidade) x log(preço), o que já comprime a cauda extrema — por isso a conclusão "
-        "de H1 não depende de poucas compras de volume muito alto."
-    )
 
     st.divider()
 
     # ── H2 — Variabilidade de preço: fornecedor vs. UASG ────────────────
     st.markdown("### H2 — Variabilidade de preço: fornecedor vs. UASG")
     st.markdown(
-        "**Achado:** a variabilidade de preço dentro do mesmo item é maior entre fornecedores "
-        "do que entre UASGs (mediana CV fornecedor=0,261 vs. mediana CV UASG=0,243; "
-        "Mann-Whitney p=0,0096). Efeito estatisticamente significativo, mas de magnitude "
-        "pequena (~7% de diferença relativa entre as medianas).\n\n"
-        "**Recomendação:** direcionar esforço de negociação para o relacionamento com "
-        "fornecedores (condições contratuais, prazos, descontos por fidelidade) em vez de "
-        "estratégias de centralização de compras por região/UASG — sem tratar isso como "
-        "alavanca prioritária, dado o tamanho de efeito modesto."
+        "- **Insight:** CV de preço maior entre fornecedores do que entre UASGs (0,260 vs. 0,243; p=0,0107)\n"
+        "- **Recomendação:** Priorizar negociação com fornecedores sobre centralização regional"
     )
     cv_fornecedor, cv_uasg = calcular_cv_h2(df)
     fig_h2 = grafico_cv_h2(cv_fornecedor, cv_uasg)                                         # <- Função 7 - H2: CV fornecedor vs. UASG
@@ -937,49 +987,27 @@ with aba_recomendacoes:
     # ── H3 — Sazonalidade ────────────────────────────────────────────────
     st.markdown("### H3 — Sazonalidade de preço e quantidade")
     st.markdown(
-        "**Achado:** a quantidade comprada varia significativamente por mês, com concentração "
-        "no início do ano civil (Kruskal-Wallis H=706,32, p=2,38e-144). O preço unitário também "
-        "varia entre meses (H=98,48, p=3,58e-16), mas sem padrão sazonal visualmente "
-        "consistente.\n\n"
-        "**Recomendação:** antecipar o planejamento de demanda e os processos licitatórios para "
-        "itens elétricos antes da concentração observada no início do ano, reduzindo o risco de "
-        "desabastecimento ou compras emergenciais mais caras. Não recomendamos tentar cronometrar "
-        "compras visando preço mais baixo em determinado mês — o achado de sazonalidade de preço "
-        "não é confiável o suficiente para orientar essa decisão."
+        "- **Insight:** Quantidade concentrada no início do ano civil (H=708,8, p<0,001)\n"
+        "- **Recomendação:** Antecipar licitações antes da concentração de início de ano"
     )
     sazonalidade_h3 = calcular_sazonalidade_h3(df)
     fig_h3 = grafico_sazonalidade_h3(sazonalidade_h3)                                      # <- Função 8 - H3: sazonalidade
     st.plotly_chart(fig_h3, width="stretch")
-    st.caption(
-        "Cor normalizada por classe (0 a 1, relativa ao próprio pico da classe), não por uma "
-        "escala global — do contrário, classes de menor volume ficariam quase invisíveis ao lado "
-        "das de maior volume. O valor real (quantidade mediana) aparece ao passar o mouse."
-    )
 
     st.divider()
 
     # ── H4 — Regularidade de consumo ─────────────────────────────────────
     st.markdown("### H4 — Regularidade de consumo")
     st.markdown(
-        "**Achado:** quanto menor a regularidade de consumo de um item, maior a concentração de "
-        "fornecedores (HHI) que o atendem (rho=-0,451, p=8,31e-198, n=3.970 itens).\n\n"
-        "**Recomendação:** o Índice de Regularidade de Consumo não é um proxy de risco de "
-        "fornecimento (isso já é coberto por H2, via variabilidade de preço entre fornecedores). "
-        "Ele é, na verdade, um sinal separado e útil por si só — indica candidatos a contrato de "
-        "fornecimento recorrente/previsível (ex: Ata de Registro de Preços), porque um item com "
-        "consumo regular é mais fácil de planejar e negociar com antecedência do que um item de "
-        "demanda errática, independente de quantos fornecedores existam para ele."
+        "- **Insight:** Menor regularidade de consumo → maior concentração de fornecedor (rho=-0,45, p<0,001)\n"
+        "- **Recomendação:** mapear os itens com menor índice de regularidade de consumo e priorizar a qualificação de fornecedores alternativos para esse grupo"
     )
     hhi_quartis_h4 = calcular_hhi_por_quartil_h4(df)
     fig_h4 = grafico_hhi_h4(hhi_quartis_h4)                                                # <- Função 9 - H4: HHI por regularidade
     st.plotly_chart(fig_h4, width="stretch")
     st.caption(
-        "Atenção — este é o achado mais sensível a outliers dos quatro: o componente de "
-        "regularidade do `indice_dependencia_v2` é uma razão média/desvio padrão do valor mensal "
-        "por item, e um único mês atípico (ex. uma licitação isolada de grande volume) infla o "
-        "desvio padrão e derruba artificialmente esse componente, fazendo um item de consumo "
-        "estável parecer 'irregular' — o componente de gasto total (em log) amortece parte do "
-        "efeito, mas não o elimina. Diferente de H2/H3, que usam mediana e testes de rank "
-        "(robustos por construção), aqui vale checar manualmente o histórico mensal antes de "
-        "descartar um item como candidato a Ata de Registro de Preços."
+        "Este gráfico mostra o padrão agregado por quartil — não identifica quais itens estão em "
+        "cada grupo. Para levantar a lista de itens específicos do quartil 'menos regular' "
+        "(candidatos à prospecção de fornecedores alternativos), seria necessário calcular o índice "
+        "de regularidade item a item e cruzar com a descrição do material."
     )
