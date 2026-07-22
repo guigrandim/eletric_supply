@@ -27,7 +27,7 @@ Link para o projeto: https://eletricsupply.streamlit.app
 
 A área de Suprimentos de uma empresa do setor elétrico compra materiais elétricos (transformadores, cabos, disjuntores, chaves, isoladores, ferragens) de forma recorrente através de licitações públicas registradas no Compras.gov.br.
 
-Até então, decisões como consolidação de compras entre unidades, negociação com fornecedores, antecipação de demanda sazonal e planejamento orçamentário para o ano seguinte não tinham uma leitura consolidada do histórico de mercado — sem visibilidade clara sobre padrões de preço, variabilidade e risco de dependência de fornecedor.
+Até então, essas decisões não tinham uma leitura consolidada do histórico de mercado — sem visibilidade clara sobre padrões de preço, variabilidade e risco de dependência de fornecedor.
 
 **Pergunta central:** Que padrões, tendências e riscos existem nas compras públicas de materiais elétricos, e quanto a área deve esperar gastar no próximo ano?
 
@@ -43,7 +43,7 @@ A solução foi estruturada seguindo a metodologia **CRISP-DS**, em 3 notebooks 
 
 2. **Tratamento e padronização** — tipagem corrigida, deduplicação de fornecedor por CNPJ, tratamento de nulos sem imputação global (decisão deliberada, documentada por coluna).
 
-3. **Análise exploratória e hipóteses de negócio** — univariada, bivariada e multivariada; testes não-paramétricos (curtose ≈ 20.816 nos dados de preço/quantidade inviabiliza métodos paramétricos); validação de 4 hipóteses (H1–H4), incluindo um índice de regularidade de consumo adaptado da Ciência do Esporte (monotonia = média/desvio padrão do gasto mensal por item).
+3. **Análise exploratória e hipóteses de negócio** — univariada, bivariada e multivariada; testes não-paramétricos (curtose ≈ 20.816 nos dados de preço/quantidade inviabiliza métodos paramétricos); validação de 4 hipóteses (H1–H4).
 
 4. **Projeção de consumo** — diagnóstico de volatilidade por granularidade (mensal descartada, trimestral adotada), backtest comparando 6 métodos de projeção contra dados reais de 2026.
 
@@ -94,7 +94,7 @@ A solução foi estruturada seguindo a metodologia **CRISP-DS**, em 3 notebooks 
 
 \* Testados informalmente fora deste backtest, antes de uma limpeza de outliers de catalogação aplicada posteriormente à base — não foram recalculados, tratar como referência aproximada.
 
-O **naive sazonal** (repete o valor do mesmo trimestre do ano anterior) foi escolhido em detrimento do XGBoost, mas por margem pequena — 2,4 pontos percentuais de MAPE, calculados diretamente no backtest sobre a base limpa. Antes da limpeza de outliers essa diferença era muito maior (15,5% vs. 51,4%): o XGBoost estava sendo penalizado por outliers de preço que distorciam o treino; removidos, os dois métodos ficam próximos. Diante de um empate técnico com apenas 2 pontos de teste, a navalha de Occam decide: entre modelos equivalentes, o mais simples (zero parâmetros ajustados) e mais interpretável.
+O **naive sazonal** (repete o valor do mesmo trimestre do ano anterior) venceu o XGBoost por margem pequena — 2,4 p.p. de MAPE. Diante de um empate técnico com apenas 2 trimestres de teste, a navalha de Occam decide: entre modelos equivalentes, o mais simples e interpretável.
 
 A granularidade também foi decidida por evidência: agregação **mensal** foi descartada (CV=0,85, piora ligeiramente para 0,86 sem outliers — ruído estrutural de licitações públicas, não outliers pontuais) em favor da agregação **trimestral** (CV=0,49), que estabiliza a série o suficiente para um backtest confiável.
 
@@ -187,7 +187,11 @@ A solução cobre o ciclo completo de um projeto de analytics aplicado a Suprime
 - Extrair a lógica duplicada de cálculo (CV, HHI, elasticidade) entre notebook e dashboard para um módulo compartilhado em `utils/`.
 - Migrar `database.db` para Git LFS ou storage externo (hoje versionado diretamente no repositório).
 
-**Limitações:** o backtest da projeção usou apenas 2 trimestres reais de 2026 — MAPE tem alta variância com tão poucos pontos; a amostra de treino é pequena (13–17 trimestres), o que penaliza modelos de ML mais complexos frente a baselines simples; a faixa de confiança é heurística (±1 desvio padrão), não um intervalo de predição estatístico formal; a projeção não incorpora eventos futuros conhecidos (reajustes contratuais, novas licitações de grande porte, câmbio para itens importados).
+**Limitações:**
+- Backtest da projeção usou apenas 2 trimestres reais de 2026 — MAPE tem alta variância com tão poucos pontos
+- Amostra de treino pequena (13–17 trimestres) penaliza modelos de ML mais complexos frente a baselines simples
+- Faixa de confiança é heurística (±1 desvio padrão), não um intervalo de predição estatístico formal
+- Projeção não incorpora eventos futuros conhecidos (reajustes contratuais, novas licitações de grande porte, câmbio para itens importados)
 
 ---
 
