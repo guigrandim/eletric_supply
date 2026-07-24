@@ -309,15 +309,18 @@ def grafico_top_classes(df_filtrado, top_n=10):
     return fig
 
 
+@st.cache_data
 def preparar_serie_trimestral_projecao(df, data_max):
     """
-    Prepara a série trimestral histórica usada como base da projeção:
-    agrega valor total por trimestre e descarta o último trimestre se ele
-    ainda estiver em andamento na data de corte da extração.
+    Separa a base em opex (consumo recorrente) e capex (compra concentrada de
+    equipamento pesado, preco_unitario > R$500 mil) e prepara a série
+    trimestral de opex para a projeção — capex não é projetado
+    numericamente, só caracterizado historicamente (ver seções 4.6.2/4.7.1
+    do notebook 03).
 
     Responde às perguntas:
-    "Qual a base histórica correta para alimentar o modelo de projeção, sem
-    distorcer o MAPE com um trimestre incompleto?"
+    "Quanto a área de Suprimentos deve esperar gastar em consumo recorrente
+    nos próximos trimestres?"
     "Quantos trimestres é preciso projetar para cobrir o próximo ano civil
     inteiro, a partir de onde a série histórica termina?"
 
@@ -330,28 +333,50 @@ def preparar_serie_trimestral_projecao(df, data_max):
 
     Retorna
     -------
-    serie_trimestral_full : pd.Series
-        Série de valor total por trimestre, sem o trimestre incompleto.
+    serie_opex : pd.Series
+        Série de valor total (opex) por trimestre, sem 2021-Q4 (incompleto),
+        sem capex, sem o trimestre incompleto mais recente.
     ano_seguinte : int
         Ano civil seguinte ao último trimestre completo — horizonte alvo.
     n_trimestres_projecao : int
         Quantidade de trimestres a projetar para cobrir `ano_seguinte` inteiro.
+    serie_capex : pd.Series
+        Série de valor total (capex) por trimestre, histórico completo (sem
+        os cortes aplicados a `serie_opex`) — usada só para caracterização.
+    df_capex : pd.DataFrame
+        Linhas de `df` classificadas como capex — usada para a tabela de
+        principais UASGs compradoras.
     """
-    # ── 1. Agregação trimestral e remoção do trimestre em andamento ─────
-    serie_trimestral_full = (
-        df.dropna(subset=["data_compra", "valor_total"])
+    # ── 1. Separação capex (preco_unitario > R$500 mil) vs. opex ────────
+    capex_mask = df["preco_unitario"] > 500_000
+    df_opex = df[~capex_mask]
+    df_capex = df[capex_mask]
+
+    # ── 2. Agregação trimestral de opex e remoção do trimestre em andamento
+    serie_opex = (
+        df_opex.dropna(subset=["data_compra", "valor_total"])
         .set_index("data_compra")
         .resample("QS")["valor_total"].sum()
     )
-    fim_do_trimestre = serie_trimestral_full.index[-1] + pd.DateOffset(months=3) - pd.DateOffset(days=1)
+    fim_do_trimestre = serie_opex.index[-1] + pd.DateOffset(months=3) - pd.DateOffset(days=1)
     if data_max < fim_do_trimestre:
-        serie_trimestral_full = serie_trimestral_full.iloc[:-1]
+        serie_opex = serie_opex.iloc[:-1]
 
-    # ── 2. Horizonte necessário para cobrir o ano civil seguinte inteiro ─
-    ano_seguinte = serie_trimestral_full.index[-1].year + 1
-    n_trimestres_projecao = (4 - serie_trimestral_full.index[-1].quarter) + 4
+    # ── 3. Remove 2021-Q4 — trimestre inicial incompleto (só nov-dez) ────
+    serie_opex = serie_opex[serie_opex.index.year >= 2022]
 
-    return serie_trimestral_full, ano_seguinte, n_trimestres_projecao
+    # ── 4. Agregação trimestral de capex (histórico completo, sem cortes) ─
+    serie_capex = (
+        df_capex.dropna(subset=["data_compra", "valor_total"])
+        .set_index("data_compra")
+        .resample("QS")["valor_total"].sum()
+    )
+
+    # ── 5. Horizonte necessário para cobrir o ano civil seguinte inteiro ─
+    ano_seguinte = serie_opex.index[-1].year + 1
+    n_trimestres_projecao = (4 - serie_opex.index[-1].quarter) + 4
+
+    return serie_opex, ano_seguinte, n_trimestres_projecao, serie_capex, df_capex
 
 
 def projecao_naive_sazonal(serie_trimestral, n_trimestres=4):
@@ -462,6 +487,37 @@ def tabela_cenarios_projecao(projecao, desvio):
         "Cenário base": [f"R$ {v:,.0f}" for v in projecao.values],
         "Melhor cenário": [f"R$ {v:,.0f}" for v in projecao.values + desvio],
     })
+
+
+def grafico_capex_historico(serie_capex):
+    """
+    Gera um gráfico de barras do valor de capex (equipamento pesado,
+    preco_unitario > R$500 mil) observado por trimestre — caracterização
+    histórica, sem projeção futura (capex não é sazonal nem previsível com
+    os dados disponíveis, ver seção 4.7.1 do notebook 03).
+
+    Responde às perguntas:
+    "Quando ocorreram as grandes compras de equipamento pesado?"
+    "O padrão de capex é recorrente ou concentrado em poucos eventos?"
+
+    Parâmetros
+    ----------
+    serie_capex : pd.Series
+        Série de valor total de capex por trimestre (saída de
+        preparar_serie_trimestral_projecao).
+
+    Retorna
+    -------
+    fig : plotly.graph_objects.Figure
+        Gráfico de barras do valor de capex por trimestre.
+    """
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=serie_capex.index, y=serie_capex.values, name="Capex"))
+    fig.update_layout(
+        yaxis_title="Valor total (R$)", xaxis_title="Trimestre",
+        title="Capex (equipamento pesado) por trimestre — histórico, sem projeção",
+    )
+    return fig
 
 
 @st.cache_data
@@ -903,29 +959,61 @@ with aba_visao_geral:
     )
 
 with aba_projecao:
-    serie_trimestral_full, ano_seguinte, n_trimestres_projecao = preparar_serie_trimestral_projecao(df, data_max)
+    serie_opex, ano_seguinte, n_trimestres_projecao, serie_capex, df_capex = preparar_serie_trimestral_projecao(df, data_max)
 
-    st.subheader(f"Projeção de consumo — ano civil {ano_seguinte}")
+    st.subheader(f"Projeção de consumo recorrente (opex) — ano civil {ano_seguinte}")
     st.caption(
-        "Projeção calculada sobre a base completa (não respeita os filtros acima), "
-        "utilizando o método: naive sazonal, com MAPE de 17,6%.\n"
+        "Projeção de consumo recorrente (opex), calculada sobre a base completa (não respeita os "
+        "filtros acima), utilizando o método naive sazonal, com MAPE de 18,7%. Compras concentradas "
+        "de equipamento pesado (capex, preço unitário > R$500 mil) são caracterizadas à parte, "
+        "abaixo, sem projeção numérica — não seguem um padrão sazonal previsível.\n"
         "Metodologia completa e limitações em notebooks/03_limpeza_eda.ipynb, seções 4.0–4.8."
     )
 
-    projecao, desvio = projecao_naive_sazonal(serie_trimestral_full, n_trimestres=n_trimestres_projecao)
+    projecao, desvio = projecao_naive_sazonal(serie_opex, n_trimestres=n_trimestres_projecao)
     projecao_ano_seguinte = projecao[projecao.index.year == ano_seguinte]
 
-    st.metric(f"Projeção total {ano_seguinte}", f"R$ {projecao_ano_seguinte.sum():,.0f}")
+    st.metric(f"Projeção de opex {ano_seguinte}", f"R$ {projecao_ano_seguinte.sum():,.0f}")
 
-    fig_projecao = grafico_projecao(serie_trimestral_full, projecao, desvio)               # <- Função 4 - Gráfico de projeção
+    fig_projecao = grafico_projecao(serie_opex, projecao, desvio)                          # <- Função 4 - Gráfico de projeção
     st.plotly_chart(fig_projecao, width="stretch")
 
     st.divider()
 
     # ── Tabela de cenários por trimestre ──────────────────────────────────
-    st.subheader("Valores projetados por trimestre")
+    st.subheader("Valores projetados por trimestre (opex)")
     tabela_projecao = tabela_cenarios_projecao(projecao, desvio)                           # <- Função 5 - Tabela de cenários
     st.dataframe(tabela_projecao, width="stretch", hide_index=True)
+
+    st.divider()
+
+    # ── Capex: caracterização histórica, sem projeção ─────────────────────
+    st.subheader("Capex (equipamento pesado) — histórico, sem projeção")
+    st.caption(
+        "Compras com preço unitário acima de R$500 mil (transformador, disjuntor de alta tensão, "
+        "equipamento de subestação) não seguem um padrão sazonal — não são projetadas numericamente. "
+        "Recomendação: orçar via pipeline de projeto/licitação conhecida, não por extrapolação de série."
+    )
+    total_capex = df_capex["valor_total"].sum()
+    total_geral = df["valor_total"].sum()
+    st.metric(
+        "Total capex observado (2021–2026)",
+        f"R$ {total_capex:,.0f}",
+        f"{total_capex/total_geral*100:.1f}% do valor total da base",
+    )
+
+    fig_capex = grafico_capex_historico(serie_capex)                                       # <- Função 10 - Gráfico de capex histórico
+    st.plotly_chart(fig_capex, width="stretch")
+
+    top_uasgs_capex = (
+        df_capex.groupby("nome_uasg")["valor_total"].sum().sort_values(ascending=False).head(5)
+    )
+    tabela_top_uasgs = pd.DataFrame({
+        "UASG": top_uasgs_capex.index,
+        "Valor capex": [f"R$ {v:,.0f}" for v in top_uasgs_capex.values],
+        "% do capex total": [f"{v/total_capex*100:.1f}%" for v in top_uasgs_capex.values],
+    })
+    st.dataframe(tabela_top_uasgs, width="stretch", hide_index=True)
 
 with aba_recomendacoes:
     st.subheader("Recomendações ao Departamento de Suprimentos")
