@@ -19,7 +19,7 @@ Link para o projeto: https://eletricsupply.streamlit.app
 ### 🎯 Destaques
 - Construí um pipeline completo — extração via API pública, banco relacional em esquema estrela e dashboard de 3 abas — sobre **164.680 registros** de compras públicas de materiais elétricos (2021–2026), dando à área de Suprimentos autoatendimento analítico em minutos.
 - Validei **4 hipóteses de negócio** com testes não-paramétricos, incluindo um achado contra-intuitivo: itens de consumo irregular têm maior, não menor, concentração de fornecedor (ρ=-0,458, p≈4,5e-205) — um proxy real de risco de ruptura de suprimento.
-- Comparei métodos de projeção de consumo em backtest real contra dados de 2026: o método mais simples (naive sazonal) venceu o XGBoost (**MAPE 17,6% vs. 20,0%**), decisão de modelo orientada pela navalha de Occam entre resultados equivalentes, não por complexidade.
+- Comparei métodos de projeção de consumo em backtest real contra dados de 2026: o método mais simples (naive sazonal) venceu o XGBoost com folga (**MAPE 17,6% vs. 75,5%**), reforçando a escolha pela navalha de Occam — zero parâmetros ajustados e mais robusto com pouco histórico de treino.
 
 ---
 
@@ -86,17 +86,17 @@ A solução foi estruturada seguindo a metodologia **CRISP-DS**, em 3 notebooks 
 | Método | Complexidade | MAPE (backtest 2026) |
 |---|---|---|
 | **Naive Sazonal ✅** | 0 parâmetros | 17,6% |
-| XGBoost | 50 árvores | 20,0% |
+| XGBoost | 50 árvores | 75,5% |
 | Holt-Winters* | 3 parâmetros | 14,6% |
 | Média simples* | 0 parâmetros | 22,6% |
 | Naive não-sazonal* | 0 parâmetros | 28,9% |
 | Média móvel (4 trimestres)* | 0 parâmetros | 46,3% |
 
-\* Testados informalmente fora deste backtest, antes de uma limpeza de outliers de catalogação aplicada posteriormente à base — não foram recalculados, tratar como referência aproximada.
+\* Testados informalmente fora deste backtest, antes de uma limpeza de outliers de catalogação e da exclusão de um trimestre inicial incompleto aplicadas posteriormente à base — não foram recalculados, tratar como referência aproximada.
 
-O naive sazonal (repete o valor do mesmo trimestre do ano anterior) venceu o XGBoost por margem pequena — 2,4 p.p. de MAPE. Diante de um empate técnico com apenas 2 trimestres de teste, a navalha de Occam decide: entre modelos equivalentes, o mais simples e interpretável.
+O naive sazonal (repete o valor do mesmo trimestre do ano anterior) venceu o XGBoost com folga — 57,9 p.p. de MAPE. Com um histórico de treino pequeno (menos de 4 anos completos), qualquer modelo que precise "aprender" sofre mais do que um baseline que só repete o padrão sazonal observado; a navalha de Occam decide: entre modelos com essa diferença de robustez, o mais simples e interpretável.
 
-A granularidade também foi decidida por evidência: agregação mensal foi descartada (CV=0,85, piora ligeiramente para 0,86 sem outliers — ruído estrutural de licitações públicas, não outliers pontuais) em favor da agregação trimestral (CV=0,49), que estabiliza a série o suficiente para um backtest confiável.
+A granularidade também foi decidida por evidência: agregação mensal foi descartada (CV=0,85, piora ligeiramente para 0,86 removendo outliers de preço/quantidade por item — esse filtro não captura a causa real da volatilidade) em favor da agregação trimestral (CV=0,47), que estabiliza a série o suficiente para um backtest confiável. A causa real da volatilidade dos trimestres mais antigos era a concentração de compra de equipamento pesado de subestação por só 2 grandes UASGs logo no início da janela de coleta — o trimestre inicial, incompleto (só 2 meses de dados), foi excluído da série usada em backtest e projeção.
 
 ### Estrutura do Projeto
 
@@ -165,7 +165,7 @@ O dashboard substituiu a consulta manual e pontual ao histórico de compras por 
 
 ### Projeção de Consumo — Ano Civil de 2027
 
-Método de produção: naive sazonal, com faixa de confiança heurística de ±1 desvio padrão histórico (≈ R$ 48,2 milhões por trimestre).
+Método de produção: naive sazonal, com faixa de confiança heurística de ±1 desvio padrão histórico (≈ R$ 44,8 milhões por trimestre).
 
 | Trimestre | Valor projetado |
 |---|---|
@@ -189,7 +189,7 @@ A solução cobre o ciclo completo de um projeto de analytics aplicado a Suprime
 
 **Limitações:**
 - Backtest da projeção usou apenas 2 trimestres reais de 2026 — MAPE tem alta variância com tão poucos pontos
-- Amostra de treino pequena (13–17 trimestres) penaliza modelos de ML mais complexos frente a baselines simples
+- Amostra de treino pequena (12 trimestres) penaliza modelos de ML mais complexos frente a baselines simples
 - Faixa de confiança é heurística (±1 desvio padrão), não um intervalo de predição estatístico formal
 - Projeção não incorpora eventos futuros conhecidos (reajustes contratuais, novas licitações de grande porte, câmbio para itens importados)
 
