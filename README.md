@@ -19,7 +19,8 @@ Link para o projeto: https://eletricsupply.streamlit.app
 ### 🎯 Destaques
 - Construí um pipeline completo — extração via API pública, banco relacional em esquema estrela e dashboard de 3 abas — sobre **164.680 registros** de compras públicas de materiais elétricos (2021–2026), dando à área de Suprimentos autoatendimento analítico em minutos.
 - Validei **4 hipóteses de negócio** com testes não-paramétricos, incluindo um achado contra-intuitivo: itens de consumo irregular têm maior, não menor, concentração de fornecedor (ρ=-0,458, p≈4,5e-205) — um proxy real de risco de ruptura de suprimento.
-- Comparei métodos de projeção de consumo em backtest real contra dados de 2026: o método mais simples (naive sazonal) venceu o XGBoost com folga (**MAPE 17,6% vs. 75,5%**), reforçando a escolha pela navalha de Occam — zero parâmetros ajustados e mais robusto com pouco histórico de treino.
+- Comparei métodos de projeção de consumo em backtest real contra dados de 2026: o método mais simples (naive sazonal) venceu o XGBoost com folga (**MAPE 18,7% vs. 81,0%**), reforçando a escolha pela navalha de Occam — zero parâmetros ajustados e mais robusto com pouco histórico de treino.
+- Segmentei a série de projeção em capex (compra concentrada de equipamento pesado, preço unitário > R$500 mil) e opex (consumo recorrente): 17,8% do valor da base vinha de só 50 transações (0,03%), 90% delas em 2 trimestres — misturar os dois na mesma série mascarava o padrão real. Capex virou caracterização histórica, não projeção numérica; opex ficou com uma faixa de confiança 2x mais estreita e defensável.
 
 ---
 
@@ -72,31 +73,31 @@ A solução foi estruturada seguindo a metodologia **CRISP-DS**, em 3 notebooks 
 - Gráficos: Série temporal (mensal/trimestral), Top 10 fornecedores por valor, Top 10 classes, tabela detalhada filtrável por período/estado/classe/fornecedor.
 
 2. **Projeção de Consumo**
-- Focada no cenário de gasto esperado para o próximo ano civil, com a incerteza sempre visível.
-- Métricas Chave: Total projetado (≈R$ 368,4 milhões para 2027), faixa de confiança de ±1 desvio padrão histórico por trimestre.
-- Gráficos: Série histórica + projeção naive sazonal com banda de confiança, tabela de cenários (pior/base/melhor) por trimestre.
+- Focada no cenário de gasto esperado para o próximo ano civil, com a incerteza sempre visível — e na distinção entre o que dá pra projetar (opex) e o que não dá (capex).
+- Métricas Chave: Total de opex projetado (≈R$ 361,4 milhões para 2027), faixa de confiança de ±1 desvio padrão histórico por trimestre; capex caracterizado à parte (histórico, sem projeção numérica).
+- Gráficos: Série histórica + projeção naive sazonal com banda de confiança, tabela de cenários (pior/base/melhor) por trimestre, gráfico de capex histórico por trimestre e tabela de principais compradores.
 
 3. **Recomendações ao Departamento de Suprimentos**
 - Síntese executiva que consolida as 4 hipóteses de negócio validadas em ação recomendada.
 - Métricas Chave: tabela-resumo H1–H4 (achado estatístico + recomendação de ação).
 - Gráficos: um gráfico de apoio por hipótese — elasticidade preço x quantidade (H1), variabilidade por fornecedor x UASG (H2), sazonalidade mensal (H3), regularidade x concentração de fornecedor/HHI (H4).
 
-### Métodos de Projeção Avaliados
+### Métodos de Projeção Avaliados (opex)
 
 | Método | Complexidade | MAPE (backtest 2026) |
 |---|---|---|
-| **Naive Sazonal ✅** | 0 parâmetros | 17,6% |
-| XGBoost | 50 árvores | 75,5% |
+| **Naive Sazonal ✅** | 0 parâmetros | 18,7% |
+| XGBoost | 50 árvores | 81,0% |
 | Holt-Winters* | 3 parâmetros | 14,6% |
 | Média simples* | 0 parâmetros | 22,6% |
 | Naive não-sazonal* | 0 parâmetros | 28,9% |
 | Média móvel (4 trimestres)* | 0 parâmetros | 46,3% |
 
-\* Testados informalmente fora deste backtest, antes de uma limpeza de outliers de catalogação e da exclusão de um trimestre inicial incompleto aplicadas posteriormente à base — não foram recalculados, tratar como referência aproximada.
+\* Testados informalmente fora deste backtest, antes da limpeza de outliers de catalogação, da exclusão do trimestre inicial incompleto e da segmentação capex/opex aplicadas posteriormente à base — não foram recalculados, tratar como referência aproximada.
 
-O naive sazonal (repete o valor do mesmo trimestre do ano anterior) venceu o XGBoost com folga — 57,9 p.p. de MAPE. Com um histórico de treino pequeno (menos de 4 anos completos), qualquer modelo que precise "aprender" sofre mais do que um baseline que só repete o padrão sazonal observado; a navalha de Occam decide: entre modelos com essa diferença de robustez, o mais simples e interpretável.
+O naive sazonal (repete o valor do mesmo trimestre do ano anterior) venceu o XGBoost com folga — 62,3 p.p. de MAPE. Com um histórico de treino pequeno (12 trimestres), qualquer modelo que precise "aprender" sofre mais do que um baseline que só repete o padrão sazonal observado; a navalha de Occam decide: entre modelos com essa diferença de robustez, o mais simples e interpretável.
 
-A granularidade também foi decidida por evidência: agregação mensal foi descartada (CV=0,85, piora ligeiramente para 0,86 removendo outliers de preço/quantidade por item — esse filtro não captura a causa real da volatilidade) em favor da agregação trimestral (CV=0,47), que estabiliza a série o suficiente para um backtest confiável. A causa real da volatilidade dos trimestres mais antigos era a concentração de compra de equipamento pesado de subestação por só 2 grandes UASGs logo no início da janela de coleta — o trimestre inicial, incompleto (só 2 meses de dados), foi excluído da série usada em backtest e projeção.
+A granularidade e a composição da série também foram decididas por evidência, não por padrão: agregação mensal foi descartada (CV=0,85, piora ligeiramente para 0,86 removendo outliers de preço/quantidade por item — esse filtro não captura a causa real da volatilidade) em favor da agregação trimestral. A causa real da volatilidade dos trimestres mais antigos não era outlier estatístico — era um processo de demanda diferente misturado na mesma série: compra concentrada de equipamento pesado de subestação (capex) por 2-3 grandes UASGs, que não segue padrão sazonal. Separei capex de opex (critério: preço unitário > R$500 mil) e excluí o trimestre inicial incompleto antes de agregar — a série de opex resultante tem CV=0,28, robusta o bastante para um backtest e uma faixa de confiança confiáveis.
 
 ### Estrutura do Projeto
 
@@ -165,15 +166,17 @@ O dashboard substituiu a consulta manual e pontual ao histórico de compras por 
 
 ### Projeção de Consumo — Ano Civil de 2027
 
-Método de produção: naive sazonal, com faixa de confiança heurística de ±1 desvio padrão histórico (≈ R$ 44,8 milhões por trimestre).
+Método de produção: naive sazonal sobre a série de opex (consumo recorrente), com faixa de confiança heurística de ±1 desvio padrão histórico (≈ R$ 23,3 milhões por trimestre).
 
-| Trimestre | Valor projetado |
+| Trimestre | Opex projetado |
 |---|---|
 | Jan–Mar/27 | R$ 70,3 milhões |
-| Abr–Jun/27 | R$ 71,1 milhões |
+| Abr–Jun/27 | R$ 69,5 milhões |
 | Jul–Set/27 | R$ 137,1 milhões |
-| Out–Dez/27 | R$ 89,9 milhões |
-| **Total 2027** | **≈ R$ 368,4 milhões** |
+| Out–Dez/27 | R$ 84,5 milhões |
+| **Total opex 2027** | **≈ R$ 361,4 milhões** |
+
+**Capex (equipamento pesado) não entra nesse total.** É caracterizado à parte: R$335,7 milhões observados entre nov/2021 e jul/2026, 90% concentrados em só 2 trimestres (2021-Q4 e 2022-Q1), dominados por 3 UASGs (EPE, FURNAS, Eletronorte). Sem periodicidade nem tendência, não é projetável de forma responsável com o histórico disponível — a recomendação é orçá-lo por pipeline de projeto/licitação conhecida, não por extrapolação de série temporal.
 
 ---
 
@@ -191,7 +194,8 @@ A solução cobre o ciclo completo de um projeto de analytics aplicado a Suprime
 - Backtest da projeção usou apenas 2 trimestres reais de 2026 — MAPE tem alta variância com tão poucos pontos
 - Amostra de treino pequena (12 trimestres) penaliza modelos de ML mais complexos frente a baselines simples
 - Faixa de confiança é heurística (±1 desvio padrão), não um intervalo de predição estatístico formal
-- Projeção não incorpora eventos futuros conhecidos (reajustes contratuais, novas licitações de grande porte, câmbio para itens importados)
+- Capex não recebe projeção numérica (decisão deliberada) — com só 2 eventos grandes em 4,6 anos de dados, qualquer projeção teria margem de erro maior que o valor projetado
+- Projeção de opex não incorpora eventos futuros conhecidos (reajustes contratuais, novas licitações de grande porte, câmbio para itens importados)
 
 ---
 
