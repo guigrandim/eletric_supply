@@ -845,7 +845,7 @@ if df_filtrado.empty:
 #Create a Header
 st.title("Materiais Elétricos — Compras Públicas")
 st.caption(
-    "Fonte: API do Portal de Dados Abertos (dadosabertos.compras.gov.br) — "
+    "Fonte: API do Portal de Dados Abertos (dadosabertos.compras.gov.br): "
     "grupos CATMAT 59 (Componentes Elétricos) e 61 (Condutores e Equip. de Energia)"
 )
 
@@ -908,7 +908,7 @@ with aba_projecao:
     st.subheader(f"Projeção de consumo — ano civil {ano_seguinte}")
     st.caption(
         "Projeção calculada sobre a base completa (não respeita os filtros acima), "
-        "utilizando o método: naive sazonal — com MAPE de 17,6%.\n"
+        "utilizando o método: naive sazonal, com MAPE de 17,6%.\n"
         "Metodologia completa e limitações em notebooks/03_limpeza_eda.ipynb, seções 4.0–4.8."
     )
 
@@ -933,7 +933,7 @@ with aba_recomendacoes:
         "Gráficos baseados nas hipóteses de negócio testadas em "
         "notebooks/03_limpeza_eda.ipynb (seções 3.2 e 5.0). Calculado sobre a base completa "
         "(não respeita os filtros da barra lateral), para manter consistência com a validação "
-        "estatística feita no notebook — os testes de significância (p-valores, correlações) "
+        "estatística feita no notebook: os testes de significância (p-valores, correlações) "
         "não são recalculados aqui, só citados."
     )
 
@@ -946,16 +946,16 @@ with aba_recomendacoes:
     st.markdown(
         "- **H1 — Economia de escala**\n"
         "  - Achado: Preço unitário cai ~0,49% a cada 1% de aumento na quantidade (r²=0,27, p<0,001)\n"
-        "  - Recomendação: Comprar junto reduz o preço por unidade — juntar pedidos recorrentes entre unidades compradoras economiza dinheiro.\n"
+        "  - Recomendação: Comprar junto reduz o preço por unidade: juntar pedidos recorrentes entre unidades compradoras economiza dinheiro.\n"
         "- **H2 — Fornecedor vs. UASG**\n"
         "  - Achado: CV de preço maior entre fornecedores do que entre UASGs (0,260 vs. 0,243; p=0,0107)\n"
-        "  - Recomendação: O preço varia mais pelo fornecedor do que pela região — negociar direto com o fornecedor rende mais do que reorganizar compras por área.\n"
+        "  - Recomendação: O preço varia mais pelo fornecedor do que pela região: negociar direto com o fornecedor rende mais do que reorganizar compras por área.\n"
         "- **H3 — Sazonalidade**\n"
         "  - Achado: Quantidade concentrada no início do ano civil (H=708,8, p<0,001)\n"
-        "  - Recomendação: As compras se concentram no início do ano — antecipar as licitações evita competir por fornecedor em cima da hora.\n"
+        "  - Recomendação: As compras se concentram no início do ano: antecipar as licitações evita competir por fornecedor em cima da hora.\n"
         "- **H4 — Regularidade de consumo**\n"
         "  - Achado: Menor regularidade de consumo → maior concentração de fornecedor (rho=-0,45, p<0,001)\n"
-        "  - Recomendação: Itens comprados de forma irregular dependem de poucos fornecedores — mapear esses itens e qualificar alternativas evita ficar refém de fornecedor único."
+        "  - Recomendação: Itens comprados de forma irregular têm maior concentração — ou seja, dependem de poucos fornecedores: mapear esses itens e qualificar alternativas evita ficar refém de fornecedor único."
     )
 
     st.divider()
@@ -964,7 +964,7 @@ with aba_recomendacoes:
     st.markdown("### H1 — Economia na quantidade comprada")
     st.markdown(
         "- **Insight:** Preço unitário cai ~0,49% a cada 1% de aumento na quantidade (r²=0,27, p<0,001)\n"
-        "- **Recomendação:** Comprar junto reduz o preço por unidade — juntar pedidos recorrentes entre unidades compradoras economiza dinheiro."
+        "- **Recomendação:** Comprar junto reduz o preço por unidade: juntar pedidos recorrentes entre unidades compradoras economiza dinheiro."
     )
     elasticidade_classe = calcular_elasticidade_por_classe(df, top_classes_valor)
     fig_h1 = grafico_elasticidade_h1(elasticidade_classe)                                  # <- Função 6 - H1: elasticidade preço-quantidade
@@ -976,7 +976,7 @@ with aba_recomendacoes:
     st.markdown("### H2 — Variabilidade de preço: fornecedor vs. UASG")
     st.markdown(
         "- **Insight:** CV de preço maior entre fornecedores do que entre UASGs (0,260 vs. 0,243; p=0,0107)\n"
-        "- **Recomendação:** O preço varia mais pelo fornecedor do que pela região — negociar direto com o fornecedor rende mais do que reorganizar compras por área."
+        "- **Recomendação:** O preço varia mais pelo fornecedor do que pela região: negociar direto com o fornecedor rende mais do que reorganizar compras por área."
     )
     cv_fornecedor, cv_uasg = calcular_cv_h2(df)
     fig_h2 = grafico_cv_h2(cv_fornecedor, cv_uasg)                                         # <- Função 7 - H2: CV fornecedor vs. UASG
@@ -988,7 +988,7 @@ with aba_recomendacoes:
     st.markdown("### H3 — Sazonalidade de preço e quantidade")
     st.markdown(
         "- **Insight:** Quantidade concentrada no início do ano civil (H=708,8, p<0,001)\n"
-        "- **Recomendação:** As compras se concentram no início do ano — antecipar as licitações evita competir por fornecedor em cima da hora."
+        "- **Recomendação:** As compras se concentram no início do ano: antecipar as licitações evita competir por fornecedor em cima da hora."
     )
     sazonalidade_h3 = calcular_sazonalidade_h3(df)
     fig_h3 = grafico_sazonalidade_h3(sazonalidade_h3)                                      # <- Função 8 - H3: sazonalidade
@@ -1000,13 +1000,13 @@ with aba_recomendacoes:
     st.markdown("### H4 — Regularidade de consumo")
     st.markdown(
         "- **Insight:** Menor regularidade de consumo → maior concentração de fornecedor (rho=-0,45, p<0,001)\n"
-        "- **Recomendação:** Itens comprados de forma irregular dependem de poucos fornecedores — mapear esses itens e qualificar alternativas evita ficar refém de fornecedor único."
+        "- **Recomendação:** Itens comprados de forma irregular têm maior concentração — ou seja, dependem de poucos fornecedores: mapear esses itens e qualificar alternativas evita ficar refém de fornecedor único."
     )
     hhi_quartis_h4 = calcular_hhi_por_quartil_h4(df)
     fig_h4 = grafico_hhi_h4(hhi_quartis_h4)                                                # <- Função 9 - H4: HHI por regularidade
     st.plotly_chart(fig_h4, width="stretch")
     st.caption(
-        "Este gráfico mostra o padrão agregado por quartil — não identifica quais itens estão em "
+        "Este gráfico mostra o padrão agregado por quartil e não identifica quais itens estão em "
         "cada grupo. Para levantar a lista de itens específicos do quartil 'menos regular' "
         "(candidatos à prospecção de fornecedores alternativos), seria necessário calcular o índice "
         "de regularidade item a item e cruzar com a descrição do material."

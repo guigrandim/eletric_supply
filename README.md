@@ -18,7 +18,7 @@ Link para o projeto: https://eletricsupply.streamlit.app
 
 ### 🎯 Destaques
 - Construí um pipeline completo — extração via API pública, banco relacional em esquema estrela e dashboard de 3 abas — sobre **164.680 registros** de compras públicas de materiais elétricos (2021–2026), dando à área de Suprimentos autoatendimento analítico em minutos.
-- Validei **4 hipóteses de negócio** com testes não-paramétricos, incluindo um achado contra-intuitivo: itens de consumo irregular têm **maior**, não menor, concentração de fornecedor (ρ=-0,458, p≈4,5e-205) — um proxy real de risco de ruptura de suprimento.
+- Validei **4 hipóteses de negócio** com testes não-paramétricos, incluindo um achado contra-intuitivo: itens de consumo irregular têm maior, não menor, concentração de fornecedor (ρ=-0,458, p≈4,5e-205) — um proxy real de risco de ruptura de suprimento.
 - Comparei métodos de projeção de consumo em backtest real contra dados de 2026: o método mais simples (naive sazonal) venceu o XGBoost (**MAPE 17,6% vs. 20,0%**), decisão de modelo orientada pela navalha de Occam entre resultados equivalentes, não por complexidade.
 
 ---
@@ -85,7 +85,7 @@ A solução foi estruturada seguindo a metodologia **CRISP-DS**, em 3 notebooks 
 
 | Método | Complexidade | MAPE (backtest 2026) |
 |---|---|---|
-| **Naive Sazonal ✅** | 0 parâmetros | **17,6%** |
+| **Naive Sazonal ✅** | 0 parâmetros | 17,6% |
 | XGBoost | 50 árvores | 20,0% |
 | Holt-Winters* | 3 parâmetros | 14,6% |
 | Média simples* | 0 parâmetros | 22,6% |
@@ -94,9 +94,9 @@ A solução foi estruturada seguindo a metodologia **CRISP-DS**, em 3 notebooks 
 
 \* Testados informalmente fora deste backtest, antes de uma limpeza de outliers de catalogação aplicada posteriormente à base — não foram recalculados, tratar como referência aproximada.
 
-O **naive sazonal** (repete o valor do mesmo trimestre do ano anterior) venceu o XGBoost por margem pequena — 2,4 p.p. de MAPE. Diante de um empate técnico com apenas 2 trimestres de teste, a navalha de Occam decide: entre modelos equivalentes, o mais simples e interpretável.
+O naive sazonal (repete o valor do mesmo trimestre do ano anterior) venceu o XGBoost por margem pequena — 2,4 p.p. de MAPE. Diante de um empate técnico com apenas 2 trimestres de teste, a navalha de Occam decide: entre modelos equivalentes, o mais simples e interpretável.
 
-A granularidade também foi decidida por evidência: agregação **mensal** foi descartada (CV=0,85, piora ligeiramente para 0,86 sem outliers — ruído estrutural de licitações públicas, não outliers pontuais) em favor da agregação **trimestral** (CV=0,49), que estabiliza a série o suficiente para um backtest confiável.
+A granularidade também foi decidida por evidência: agregação mensal foi descartada (CV=0,85, piora ligeiramente para 0,86 sem outliers — ruído estrutural de licitações públicas, não outliers pontuais) em favor da agregação trimestral (CV=0,49), que estabiliza a série o suficiente para um backtest confiável.
 
 ### Estrutura do Projeto
 
@@ -165,7 +165,7 @@ O dashboard substituiu a consulta manual e pontual ao histórico de compras por 
 
 ### Projeção de Consumo — Ano Civil de 2027
 
-Método de produção: **naive sazonal**, com faixa de confiança heurística de ±1 desvio padrão histórico (≈ R$ 48,2 milhões por trimestre).
+Método de produção: naive sazonal, com faixa de confiança heurística de ±1 desvio padrão histórico (≈ R$ 48,2 milhões por trimestre).
 
 | Trimestre | Valor projetado |
 |---|---|
@@ -199,16 +199,16 @@ A solução cobre o ciclo completo de um projeto de analytics aplicado a Suprime
 
 ## 🧰 Skills Demonstradas
 
-- **Engenharia de dados:** extração via API com rate limiting e retry, banco relacional em esquema estrela, pipeline resumível.
-- **Estatística aplicada:** testes não-paramétricos (Mann-Whitney, Kruskal-Wallis, Spearman) justificados por diagnóstico de curtose/assimetria, em vez de aplicar testes paramétricos por padrão.
-- **Séries temporais:** diagnóstico de granularidade por coeficiente de variação, backtest comparando 6 métodos de projeção, feature engineering sem vazamento temporal.
-- **Visualização de dados:** dashboard Streamlit multi-página com filtros, KPIs e projeção interativa.
-- **Comunicação executiva:** tradução de 4 hipóteses estatísticas em recomendações acionáveis para Suprimentos, com transparência sobre efeitos pequenos vs. grandes.
+- Engenharia de dados: extração via API com rate limiting e retry, banco relacional em esquema estrela, pipeline resumível.
+- Estatística aplicada: testes não-paramétricos (Mann-Whitney, Kruskal-Wallis, Spearman) justificados por diagnóstico de curtose/assimetria, em vez de aplicar testes paramétricos por padrão.
+- Séries temporais: diagnóstico de granularidade por coeficiente de variação, backtest comparando 6 métodos de projeção, feature engineering sem vazamento temporal.
+- Visualização de dados: dashboard Streamlit multi-página com filtros, KPIs e projeção interativa.
+- Comunicação executiva: tradução de 4 hipóteses estatísticas em recomendações acionáveis para Suprimentos, com transparência sobre efeitos pequenos vs. grandes.
 
 ## 👩‍💻 Autor
 
 Desenvolvido por Guilherme Grandim como um projeto de portfólio em Ciências/Análise de Dados.
-Sinta-se à vontade para entrar em contato ou contribuir com o projeto!
+Comentários e sugestões sobre o projeto são bem-vindos.
 Linkedin: [🔗](https://www.linkedin.com/in/guilherme-grandim/)
 Gmail: [📧](mailto:gui.grandim@gmail.com)
 
