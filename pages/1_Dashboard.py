@@ -383,7 +383,7 @@ def projecao_naive_sazonal(serie_trimestral, n_trimestres=4):
     """
     Projeta valores futuros repetindo o valor do mesmo trimestre do ano
     anterior — método vencedor no backtest do notebook 03 (seção 4.7): MAPE
-    17,6% vs. 20,0% do XGBoost.
+    18,7% vs. 81,0% do XGBoost.
 
     Responde às perguntas:
     "Quanto a área de Suprimentos deve esperar gastar nos próximos

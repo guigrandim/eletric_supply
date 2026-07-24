@@ -20,7 +20,7 @@ Link para o projeto: https://eletricsupply.streamlit.app
 - Construí um pipeline completo — extração via API pública, banco relacional em esquema estrela e dashboard de 3 abas — sobre **164.680 registros** de compras públicas de materiais elétricos (2021–2026), dando à área de Suprimentos autoatendimento analítico em minutos.
 - Validei **4 hipóteses de negócio** com testes não-paramétricos, incluindo um achado contra-intuitivo: itens de consumo irregular têm maior, não menor, concentração de fornecedor (ρ=-0,458, p≈4,5e-205) — um proxy real de risco de ruptura de suprimento.
 - Comparei métodos de projeção de consumo em backtest real contra dados de 2026: o método mais simples (naive sazonal) venceu o XGBoost com folga (**MAPE 18,7% vs. 81,0%**), reforçando a escolha pela navalha de Occam — zero parâmetros ajustados e mais robusto com pouco histórico de treino.
-- Segmentei a série de projeção em capex (compra concentrada de equipamento pesado, preço unitário > R$500 mil) e opex (consumo recorrente): 17,8% do valor da base vinha de só 50 transações (0,03%), 90% delas em 2 trimestres — misturar os dois na mesma série mascarava o padrão real. Capex virou caracterização histórica, não projeção numérica; opex ficou com uma faixa de confiança 2x mais estreita e defensável.
+- Segmentei a série de projeção em capex (compra concentrada de equipamento pesado, preço unitário > R$500 mil) e opex (consumo recorrente): 17,8% do valor da base vinha de só 50 transações (0,03%), 90% do valor em 2 trimestres — misturar os dois na mesma série mascarava o padrão real. Capex virou caracterização histórica, não projeção numérica; opex ficou com uma faixa de confiança 2x mais estreita e defensável.
 
 ---
 
