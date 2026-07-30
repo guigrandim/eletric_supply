@@ -877,6 +877,167 @@ def grafico_hhi_h4(hhi_quartis_h4):
     return fig
 
 
+@st.cache_data
+def calcular_itens_risco_h4(df, top_n=15):
+    """
+    Identifica os itens específicos por trás do padrão agregado de H4: dentre
+    os itens de consumo menos regular (metade abaixo da mediana de
+    regularidade_consumo), ranqueia pelos que têm menos fornecedores efetivos
+    (1/HHI) e maior gasto — irregularidade sozinha não importa se o item tem
+    gasto irrisório. Substitui o quartil agregado por uma lista acionável de
+    itens, atendendo à limitação já documentada no caption do gráfico de H4
+    (não dava para saber quais itens estavam em cada quartil).
+
+    Responde às perguntas:
+    "Quais itens específicos combinam consumo irregular com poucos
+    fornecedores concorrendo — ou seja, oferecem risco de ruptura de
+    suprimento?"
+
+    Parâmetros
+    ----------
+    df : pd.DataFrame
+        Base completa (carregar_dados()), sem filtro de UI.
+    top_n : int
+        Quantidade de itens de maior risco a retornar.
+
+    Retorna
+    -------
+    pd.DataFrame
+        Uma linha por item de risco, com codigo_item_catalogo, descricao_item,
+        regularidade_consumo, gasto_total, fornecedores_efetivos e item_label
+        (rótulo curto para o eixo do gráfico).
+    """
+    valor_mensal_item = df.dropna(subset=["data_compra"]).groupby(
+        ["codigo_item_catalogo", pd.Grouper(key="data_compra", freq="ME")]
+    )["valor_total"].sum()
+
+    regularidade_consumo = valor_mensal_item.groupby("codigo_item_catalogo").apply(
+        lambda x: x.mean() / x.std() if x.std() > 0 else np.nan
+    )
+    gasto_total_item = valor_mensal_item.groupby("codigo_item_catalogo").sum()
+    n_meses = valor_mensal_item.groupby("codigo_item_catalogo").count()
+
+    df_item = pd.DataFrame({
+        "regularidade_consumo": regularidade_consumo,
+        "gasto_total": gasto_total_item,
+        "n_meses": n_meses,
+    }).query("n_meses >= 6").dropna(subset=["regularidade_consumo"])
+
+    # mesmo cálculo de HHI por item de calcular_hhi_por_quartil_h4, repetido
+    # aqui (não fatorado numa função comum) porque as duas funções retornam
+    # granularidades diferentes — quartil agregado vs. item a item.
+    participacao_sq = (
+        df.dropna(subset=["codigo_item_catalogo", "ni_fornecedor", "valor_total"])
+        .groupby(["codigo_item_catalogo", "ni_fornecedor"])["valor_total"].sum()
+        .groupby(level=0, group_keys=False).apply(lambda x: (x / x.sum()) ** 2)
+    )
+    hhi_item = participacao_sq.groupby("codigo_item_catalogo").sum().rename("hhi")
+
+    df_item = df_item.join(hhi_item).dropna(subset=["hhi"])
+    df_item["fornecedores_efetivos"] = 1 / df_item["hhi"]
+
+    descricao_item = df.groupby("codigo_item_catalogo")["descricao_item"].first()
+    df_item = df_item.join(descricao_item)
+
+    mediana_regularidade = df_item["regularidade_consumo"].median()
+    itens_irregulares = df_item[df_item["regularidade_consumo"] <= mediana_regularidade]
+
+    itens_risco = itens_irregulares.sort_values(
+        ["fornecedores_efetivos", "gasto_total"], ascending=[True, False]
+    ).head(top_n).reset_index()
+
+    itens_risco["item_label"] = (
+        itens_risco["codigo_item_catalogo"].astype(str) + " - "
+        + itens_risco["descricao_item"].fillna("(sem descrição)").str.slice(0, 40)
+    )
+    return itens_risco
+
+
+def grafico_itens_risco_h4(itens_risco_h4):
+    """
+    Gera um gráfico de barras horizontais com os itens de maior risco de
+    fornecimento identificados por calcular_itens_risco_h4 — segmenta H4 por
+    item (em vez de fornecedor, cuja granularidade é alta demais para um
+    gráfico legível) para mostrar quais itens específicos concentram o risco.
+
+    Responde às perguntas:
+    "Quais itens têm o menor número de fornecedores efetivos concorrendo,
+    entre os de consumo mais irregular?"
+
+    Parâmetros
+    ----------
+    itens_risco_h4 : pd.DataFrame
+        Saída de calcular_itens_risco_h4().
+
+    Retorna
+    -------
+    fig : plotly.graph_objects.Figure
+        Gráfico de barras horizontais, ordenado do item de maior risco
+        (menos fornecedores efetivos) para o de menor risco.
+    """
+    dados_ordenados = itens_risco_h4.sort_values("fornecedores_efetivos", ascending=False)
+    fig = px.bar(
+        dados_ordenados, x="fornecedores_efetivos", y="item_label", orientation="h",
+        text_auto=".1f",
+        labels={
+            "item_label": "Item",
+            "fornecedores_efetivos": "Número efetivo de fornecedores concorrendo",
+        },
+        title="Itens de consumo irregular com menos fornecedores concorrendo (maior risco)",
+    )
+    return fig
+
+
+@st.cache_data
+def calcular_fornecedores_item_h4(df, codigo_item_catalogo):
+    """
+    Para um item específico, calcula por fornecedor o gasto total, a
+    participação no gasto do item e um índice de regularidade de
+    fornecimento (média/desvio-padrão do valor mensal fornecido pelo
+    fornecedor) — mesma fórmula de regularidade_consumo usada por item em
+    calcular_itens_risco_h4, aplicada aqui por fornecedor dentro do item.
+
+    Responde às perguntas:
+    "Dentro de um item de risco, quais fornecedores participam, com que peso
+    no gasto, e qual deles fornece de forma mais regular ao longo do tempo?"
+
+    Parâmetros
+    ----------
+    df : pd.DataFrame
+        Base completa (carregar_dados()), sem filtro de UI.
+    codigo_item_catalogo : int
+        Código do item a detalhar.
+
+    Retorna
+    -------
+    pd.DataFrame
+        Uma linha por fornecedor do item, ordenada por gasto total
+        decrescente, com nome_fornecedor, gasto_total, participacao_pct,
+        n_meses_fornecendo e indice_regularidade.
+    """
+    df_item = df[df["codigo_item_catalogo"] == codigo_item_catalogo].dropna(subset=["data_compra"])
+    valor_mensal_fornecedor = df_item.groupby(
+        ["ni_fornecedor", pd.Grouper(key="data_compra", freq="ME")]
+    )["valor_total"].sum()
+
+    indice_regularidade = valor_mensal_fornecedor.groupby("ni_fornecedor").apply(
+        lambda x: x.mean() / x.std() if x.std() > 0 else np.nan
+    )
+    gasto_total = valor_mensal_fornecedor.groupby("ni_fornecedor").sum()
+    n_meses = valor_mensal_fornecedor.groupby("ni_fornecedor").count()
+    nome_fornecedor = df_item.groupby("ni_fornecedor")["nome_fornecedor"].first()
+
+    tabela = pd.DataFrame({
+        "nome_fornecedor": nome_fornecedor,
+        "gasto_total": gasto_total,
+        "participacao_pct": gasto_total / gasto_total.sum() * 100,
+        "n_meses_fornecendo": n_meses,
+        "indice_regularidade": indice_regularidade,
+    }).sort_values("gasto_total", ascending=False).reset_index(drop=True)
+
+    return tabela
+
+
 #===============================================
 # Select Directory - Load Files and Clean Dataset
 #===============================================
@@ -1093,9 +1254,44 @@ with aba_recomendacoes:
     hhi_quartis_h4 = calcular_hhi_por_quartil_h4(df)
     fig_h4 = grafico_hhi_h4(hhi_quartis_h4)                                                # <- Função 9 - H4: HHI por regularidade
     st.plotly_chart(fig_h4, width="stretch")
+
+    st.markdown("#### Quais itens concentram o risco")
+    st.markdown(
+        "O gráfico acima mostra o padrão agregado por quartil, mas não identifica quais itens "
+        "estão em cada grupo. Abaixo, o mesmo padrão segmentado por item — a granularidade de "
+        "fornecedor é alta demais (milhares de fornecedores) para um gráfico legível, então a "
+        "segmentação é por item, com os fornecedores de cada um disponíveis na tabela logo abaixo."
+    )
+    itens_risco_h4 = calcular_itens_risco_h4(df)
+    fig_itens_risco_h4 = grafico_itens_risco_h4(itens_risco_h4)                            # <- Função 11 - H4: itens de risco
+    st.plotly_chart(fig_itens_risco_h4, width="stretch")
     st.caption(
-        "Este gráfico mostra o padrão agregado por quartil e não identifica quais itens estão em "
-        "cada grupo. Para levantar a lista de itens específicos do quartil 'menos regular' "
-        "(candidatos à prospecção de fornecedores alternativos), seria necessário calcular o índice "
-        "de regularidade item a item e cruzar com a descrição do material."
+        "Itens com consumo abaixo da mediana de regularidade, ranqueados pelos que têm menos "
+        "fornecedores efetivos (1/HHI) e maior gasto. Sensível a outliers de preço/quantidade "
+        "do item, como as demais métricas de gasto mensal desta aba."
+    )
+
+    item_selecionado_h4 = st.selectbox(
+        "Ver fornecedores de um item de risco",
+        options=itens_risco_h4["codigo_item_catalogo"],
+        format_func=lambda cod: itens_risco_h4.set_index("codigo_item_catalogo").loc[cod, "item_label"],
+    )
+    fornecedores_item_h4 = calcular_fornecedores_item_h4(df, item_selecionado_h4)
+    st.dataframe(
+        fornecedores_item_h4,
+        width="stretch",
+        column_config={
+            "nome_fornecedor": "Fornecedor",
+            "gasto_total": st.column_config.NumberColumn("Gasto total", format="R$ %.2f"),
+            "participacao_pct": st.column_config.NumberColumn("Participação", format="%.1f%%"),
+            "n_meses_fornecendo": "Meses fornecendo",
+            "indice_regularidade": st.column_config.NumberColumn("Índice de regularidade", format="%.2f"),
+        },
+        hide_index=True,
+    )
+    st.caption(
+        "Índice de regularidade = média/desvio-padrão do valor mensal fornecido pelo fornecedor "
+        "(mesma fórmula da regularidade de consumo do item, aplicada por fornecedor). Quanto maior, "
+        "mais estável o fornecimento mês a mês; fornecedor com um único mês de fornecimento não tem "
+        "desvio-padrão definido e aparece em branco."
     )
