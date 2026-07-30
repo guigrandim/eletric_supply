@@ -164,29 +164,68 @@ def carregar_dados():
     # notebook 03), numa faixa que escapa do piso de R$500 mil da exclusão
     # anterior: aqui o preco_unitario sozinho fica abaixo do piso — é o
     # valor_total (quantidade × preço) que fica implausível, porque a
-    # quantidade também é grande. Ex.: "CHAVE ELÉTRICA, TIPO: DIP SWITCH"
-    # (10º percentil de preço do item ≈ R$21,30) a R$16.286,87/unidade em
-    # lotes de 600 e 300 unidades — R$9,77mi e R$4,89mi em duas transações,
-    # para um componente cujo custo normal é de centavos a poucas dezenas de
-    # reais. Descoberto ao investigar por que um único fornecedor dominava
-    # 99,8% do gasto de um item na tabela de fornecedores da aba
-    # "Recomendações" (H4). Critério (5 filtros, nenhum sozinho é
-    # suficiente): item tipicamente barato (10º percentil de preço do
-    # próprio item < R$200, com >=10 transações pra ser um baseline
-    # estável — usa percentil, não mediana, porque a mediana já sai
-    # contaminada quando boa parte das transações do item tem esse mesmo
-    # erro) + preço >= 500x esse baseline + valor_total >= R$500 mil (mesmo
-    # piso das exclusões acima, aplicado ao total da transação) + preço
-    # unitário ainda abaixo de R$500 mil (não sobrepõe a exclusão anterior)
-    # + comprador não é grande concessionária (mesma lista acima).
+    # quantidade também é grande. Descoberto ao investigar por que um único
+    # fornecedor dominava 99,8% do gasto de um item na tabela de fornecedores
+    # da aba "Recomendações" (H4). Uma primeira tentativa de generalizar o
+    # critério automaticamente (agrupando por fornecedor+comprador+data)
+    # capturou itens de catálogo genuinamente amplos como falso positivo (ex.
+    # "PEÇA REPOSIÇÃO PARA SUBESTAÇÃO", código 402800 — 32 de 35 compradores
+    # independentes pagam preço "elevado", não é erro). Critério final,
+    # verificado linha a linha (nome do fornecedor vs. ramo do item +
+    # comparação com fornecedores independentes do mesmo item), em 3 etapas:
+    # 1) "Semente": item tipicamente barato (10º percentil de preço do
+    #    próprio item < R$200, com >=10 transações) + preço >= 500x esse
+    #    baseline + valor_total >= R$500 mil + preço unitário < R$500 mil +
+    #    comprador não é grande concessionária — menos os itens confirmados
+    #    como categoria legítima na investigação (ver lista abaixo).
+    # 2) Expansão por lote: outras linhas do mesmo fornecedor+UASG+data de
+    #    uma linha "semente" também entram, mesmo com razão <500x, desde que
+    #    cumpram o piso de magnitude.
+    # 3) Caso específico verificado manualmente: SCJ Segurança Digital,
+    #    13/09/2022 — nome de ramo (segurança digital) incompatível com os
+    #    itens vendidos (ferragens/cabos), 8 transações num único dia para um
+    #    único comprador, mesma assinatura da DBA Suporte, mas nenhuma delas
+    #    cruza a razão de 500x individualmente.
     eh_grande_concessionaria = df["nome_uasg"].str.contains("|".join(grandes_concessionarias), case=False, na=False)
     n_por_item = df.groupby("codigo_item_catalogo")["preco_unitario"].transform("count")
     p10_por_item = df.groupby("codigo_item_catalogo")["preco_unitario"].transform(lambda x: x.quantile(0.10))
     razao_p10_item = df["preco_unitario"] / p10_por_item
+    piso_magnitude_110 = (
+        (p10_por_item >= 1) & (p10_por_item < 200)
+        & (df["valor_total"] >= 500_000) & (df["preco_unitario"] < 500_000)
+        & (~eh_grande_concessionaria)
+    )
+    itens_legitimos_confirmados_110 = {
+        402800,  # "peça reposição para subestação" - categoria ampla, 32/35 compradores pagam preço elevado
+        339844,  # chave liga/desliga p/ aeromodelismo - fornecedor é loja de aeromodelismo, item bate
+        607319,  # chave estática p/ rack 19pol - fornecedor de informática, plausível p/ ATS de datacenter
+        426993,  # cabo triaxial p/ dosimetria - fornecedor é a Tektronix (fabricante real), item bate
+        366436,  # disjuntor alta tensão 69kV - preço plausível p/ disjuntor real dessa classe
+        458520,  # cabo elétrico 70mm2 extra-flexível - preço plausível p/ bitola grossa
+        477061,  # disjuntor média tensão 630A - preço plausível p/ disjuntor de subestação real
+        322661,  # contator p/ ar-condicionado - fornecedor de peças ferroviárias, plausível p/ AC de trem
+        610168,  # cabo flexível 50mm2, rolo de 100m - preço plausível por rolo de cabo premium
+        417851,  # disjuntor média tensão 15kV retrofit (ref. ABB) - especificação muito detalhada, plausível
+        328012,  # cabo nu 95mm2 19 fios - 2 fornecedores independentes cotam valor parecido pro mesmo comprador
+    }
+    outlier_semente_110 = (
+        (n_por_item >= 10) & (razao_p10_item >= 500) & piso_magnitude_110
+        & (~df["codigo_item_catalogo"].isin(itens_legitimos_confirmados_110))
+    )
+    grupo_110 = (
+        df["ni_fornecedor"].astype(str) + "|" + df["codigo_uasg"].astype(str)
+        + "|" + df["data_compra"].astype(str)
+    )
+    grupos_com_semente_110 = set(grupo_110[outlier_semente_110])
+    no_grupo_semente_110 = grupo_110.isin(grupos_com_semente_110)
+    lote_scj_110 = (
+        (df["ni_fornecedor"] == "15510770000151")
+        & (df["data_compra"] == pd.Timestamp("2022-09-13"))
+    )
     outlier_valor_total = (
-        (n_por_item >= 10) & (p10_por_item >= 1) & (p10_por_item < 200)
-        & (razao_p10_item >= 500) & (df["valor_total"] >= 500_000)
-        & (df["preco_unitario"] < 500_000) & (~eh_grande_concessionaria)
+        outlier_semente_110
+        | (no_grupo_semente_110 & piso_magnitude_110)
+        | (lote_scj_110 & piso_magnitude_110)
     )
     df = df[~outlier_valor_total]
 
