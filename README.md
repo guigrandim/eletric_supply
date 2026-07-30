@@ -112,7 +112,8 @@ eletric_supply/
 ├── Home.py             # Ponto de entrada do dashboard Streamlit (resumo do projeto e navegação)
 ├── LICENSE             # Licença MIT do projeto
 ├── README.md           # Documentação principal do projeto
-└── requirements.txt    # Lista de bibliotecas Python necessárias
+├── requirements.txt              # Bibliotecas do dashboard (Streamlit)
+└── requirements-notebooks.txt    # + bibliotecas usadas só nos notebooks (ML, plots, requests)
 ```
 
 ### Como Executar Localmente
@@ -124,7 +125,7 @@ pip install -r requirements.txt
 streamlit run Home.py
 ```
 
-> O banco `assets/data/database.db` já está versionado no repositório — a aplicação roda direto, sem precisar re-executar os notebooks de extração. Para regenerar os dados do zero (ex. período mais recente), rode `notebooks/01` e `notebooks/02` nesta ordem.
+> O banco `assets/data/database.db` já está versionado no repositório — a aplicação roda direto, sem precisar re-executar os notebooks de extração. Para regenerar os dados do zero (ex. período mais recente) ou rodar os notebooks (`01`/`02`/`03`), instale `pip install -r requirements-notebooks.txt` — o dashboard sozinho não precisa dessas dependências (xgboost, statsmodels, scikit-learn, matplotlib, seaborn, requests).
 
 ---
 
