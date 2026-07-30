@@ -89,46 +89,31 @@ def formatar_valor_compacto(valor):
     return f"R$ {valor:,.0f}"
 
 
-@st.cache_data
-def carregar_dados():
+def _aplicar_filtros_outlier(df):
     """
-    Carrega o schema estrela do banco SQLite e junta as tabelas num único
-    DataFrame achatado, pronto para os filtros e gráficos do dashboard.
+    Remove as transações com erro de preenchimento (preço/valor implausível)
+    já identificadas e verificadas manualmente no notebook 03 (seções 1.8,
+    1.9 e 1.10) — três fenômenos distintos, não um único critério genérico:
+    erro de catalogação pontual (1.8), erro sistemático em itens baratos
+    lançados a preço de equipamento pesado (1.9), e erro de lote onde é o
+    valor_total (não o preco_unitario isolado) que fica implausível (1.10).
 
-    Responde às perguntas:
-    "Quais compras de materiais elétricos foram registradas, com que
-    fornecedor, UASG e classe de material?"
-    "Qual o valor total de cada compra (quantidade x preço unitário)?"
+    Não unificar estes três blocos num filtro genérico: cada um já teve pelo
+    menos uma versão que sobre ou sub-removeu linhas antes de chegar no
+    critério atual (ver histórico em CLAUDE.md) — mexer na lógica exige o
+    mesmo cuidado de verificação manual, não só um refactor de código.
 
     Parâmetros
     ----------
-    Nenhum — lê diretamente de CAMINHO_BANCO (assets/data/database.db).
+    df : pd.DataFrame
+        Base achatada, já com valor_total calculado.
 
     Retorna
     -------
-    df : pd.DataFrame
-        Uma linha por item comprado, com colunas de fato (quantidade, preço
-        unitário, data, valor_total) e dimensões achatadas (material,
-        fornecedor, UASG).
+    pd.DataFrame
+        Mesma base, sem as linhas identificadas como erro de preenchimento.
     """
-    conexao = sqlite3.connect(CAMINHO_BANCO)
-    query = """
-    SELECT
-        f.id_compra_item, f.codigo_item_catalogo, f.ni_fornecedor, f.codigo_uasg,
-        f.quantidade, f.preco_unitario, f.data_compra,
-        m.nome_classe, m.nome_grupo, m.nome_pdm, m.descricao_item,
-        fo.nome_fornecedor,
-        u.nome_uasg, u.municipio, u.estado, u.nome_orgao, u.poder, u.esfera
-    FROM fato_precos_praticados f
-    LEFT JOIN dim_material m ON f.codigo_item_catalogo = m.codigo_item
-    LEFT JOIN dim_fornecedor fo ON f.ni_fornecedor = fo.ni_fornecedor
-    LEFT JOIN dim_uasg u ON f.codigo_uasg = u.codigo_uasg
-    """
-    df = pd.read_sql_query(query, conexao)
-    conexao.close()
-
-    df["data_compra"] = pd.to_datetime(df["data_compra"], errors="coerce")
-    df["valor_total"] = df["quantidade"] * df["preco_unitario"]
+    grandes_concessionarias = ["CHESF", "FURNAS", "ELETRONORTE", "CENTRAIS ELETRICAS DO NORTE", "EPE-CIA"]
 
     # Erro de dado pontual: 4 lançamentos de "ISOLADOR EPOXI" (código 77127) em
     # 03/12/2021, fornecedor Sartorius (fabricante de equipamento de
@@ -151,7 +136,6 @@ def carregar_dados():
     # subestação legitimamente nessa faixa, mesmo sob código genérico
     # compartilhado com itens baratos). Preserva a variação real de preço na
     # série temporal dos dois lados, em vez de só cortar tudo acima de um teto.
-    grandes_concessionarias = ["CHESF", "FURNAS", "ELETRONORTE", "CENTRAIS ELETRICAS DO NORTE", "EPE-CIA"]
     eh_grande_concessionaria = df["nome_uasg"].str.contains("|".join(grandes_concessionarias), case=False, na=False)
     mediana_por_item = df.groupby("codigo_item_catalogo")["preco_unitario"].transform("median")
     razao_mediana_item = df["preco_unitario"] / mediana_por_item
@@ -228,6 +212,51 @@ def carregar_dados():
         | (lote_scj_110 & piso_magnitude_110)
     )
     df = df[~outlier_valor_total]
+
+    return df
+
+
+@st.cache_data
+def carregar_dados():
+    """
+    Carrega o schema estrela do banco SQLite e junta as tabelas num único
+    DataFrame achatado, pronto para os filtros e gráficos do dashboard.
+
+    Responde às perguntas:
+    "Quais compras de materiais elétricos foram registradas, com que
+    fornecedor, UASG e classe de material?"
+    "Qual o valor total de cada compra (quantidade x preço unitário)?"
+
+    Parâmetros
+    ----------
+    Nenhum — lê diretamente de CAMINHO_BANCO (assets/data/database.db).
+
+    Retorna
+    -------
+    df : pd.DataFrame
+        Uma linha por item comprado, com colunas de fato (quantidade, preço
+        unitário, data, valor_total) e dimensões achatadas (material,
+        fornecedor, UASG).
+    """
+    conexao = sqlite3.connect(CAMINHO_BANCO)
+    query = """
+    SELECT
+        f.id_compra_item, f.codigo_item_catalogo, f.ni_fornecedor, f.codigo_uasg,
+        f.quantidade, f.preco_unitario, f.data_compra,
+        m.nome_classe, m.nome_grupo, m.nome_pdm, m.descricao_item,
+        fo.nome_fornecedor,
+        u.nome_uasg, u.municipio, u.estado, u.nome_orgao, u.poder, u.esfera
+    FROM fato_precos_praticados f
+    LEFT JOIN dim_material m ON f.codigo_item_catalogo = m.codigo_item
+    LEFT JOIN dim_fornecedor fo ON f.ni_fornecedor = fo.ni_fornecedor
+    LEFT JOIN dim_uasg u ON f.codigo_uasg = u.codigo_uasg
+    """
+    df = pd.read_sql_query(query, conexao)
+    conexao.close()
+
+    df["data_compra"] = pd.to_datetime(df["data_compra"], errors="coerce")
+    df["valor_total"] = df["quantidade"] * df["preco_unitario"]
+    df = _aplicar_filtros_outlier(df)
 
     return df
 
@@ -843,6 +872,56 @@ def grafico_sazonalidade_h3(sazonalidade_h3):
     return fig
 
 
+def _calcular_regularidade_e_hhi_por_item(df):
+    """
+    Calcula, por item (codigo_item_catalogo), a regularidade de consumo
+    (média/desvio-padrão do gasto mensal), o gasto total, o número de meses
+    com compra e a concentração de fornecedor (HHI e fornecedores efetivos =
+    1/HHI) — base compartilhada por calcular_hhi_por_quartil_h4 (agregação em
+    quartis) e calcular_itens_risco_h4 (ranking item a item), que só
+    divergem na agregação final aplicada em cima destas mesmas colunas.
+
+    Parâmetros
+    ----------
+    df : pd.DataFrame
+        Base completa (carregar_dados()), sem filtro de UI.
+
+    Retorna
+    -------
+    pd.DataFrame
+        Indexado por codigo_item_catalogo, com regularidade_consumo,
+        gasto_total, n_meses, hhi e fornecedores_efetivos. Itens com menos
+        de 6 meses de histórico são descartados (regularidade pouco
+        confiável com poucas observações).
+    """
+    valor_mensal_item = df.dropna(subset=["data_compra"]).groupby(
+        ["codigo_item_catalogo", pd.Grouper(key="data_compra", freq="ME")]
+    )["valor_total"].sum()
+
+    regularidade_consumo = valor_mensal_item.groupby("codigo_item_catalogo").apply(
+        lambda x: x.mean() / x.std() if x.std() > 0 else np.nan
+    )
+    gasto_total_item = valor_mensal_item.groupby("codigo_item_catalogo").sum()
+    n_meses = valor_mensal_item.groupby("codigo_item_catalogo").count()
+
+    df_item = pd.DataFrame({
+        "regularidade_consumo": regularidade_consumo,
+        "gasto_total": gasto_total_item,
+        "n_meses": n_meses,
+    }).query("n_meses >= 6").dropna(subset=["regularidade_consumo"])
+
+    participacao_sq = (
+        df.dropna(subset=["codigo_item_catalogo", "ni_fornecedor", "valor_total"])
+        .groupby(["codigo_item_catalogo", "ni_fornecedor"])["valor_total"].sum()
+        .groupby(level=0, group_keys=False).apply(lambda x: (x / x.sum()) ** 2)
+    )
+    hhi_item = participacao_sq.groupby("codigo_item_catalogo").sum().rename("hhi")
+
+    df_item = df_item.join(hhi_item).dropna(subset=["hhi"])
+    df_item["fornecedores_efetivos"] = 1 / df_item["hhi"]
+    return df_item
+
+
 @st.cache_data
 def calcular_hhi_por_quartil_h4(df):
     """
@@ -868,37 +947,16 @@ def calcular_hhi_por_quartil_h4(df):
     pd.DataFrame
         Uma linha por quartil de indice_dependencia_v2, com o HHI médio.
     """
-    valor_mensal_item = df.dropna(subset=["data_compra"]).groupby(
-        ["codigo_item_catalogo", pd.Grouper(key="data_compra", freq="ME")]
-    )["valor_total"].sum()
-
-    regularidade_consumo = valor_mensal_item.groupby("codigo_item_catalogo").apply(
-        lambda x: x.mean() / x.std() if x.std() > 0 else np.nan
-    )
-    gasto_total_item = valor_mensal_item.groupby("codigo_item_catalogo").sum()
-    n_meses = valor_mensal_item.groupby("codigo_item_catalogo").count()
-
-    df_regularidade = pd.DataFrame({
-        "regularidade_consumo": regularidade_consumo,
-        "gasto_total": gasto_total_item,
-        "n_meses": n_meses,
-    }).query("n_meses >= 6").dropna(subset=["regularidade_consumo"])
+    df_item = _calcular_regularidade_e_hhi_por_item(df)
 
     # mesma combinação do notebook (seção 2.3.4): regularidade e gasto total
     # em z-score, para que nenhuma das duas dimensões domine pela escala.
-    df_regularidade["indice_dependencia_v2"] = (
-        zscore(df_regularidade["regularidade_consumo"])
-        + zscore(np.log1p(df_regularidade["gasto_total"]))
+    df_item["indice_dependencia_v2"] = (
+        zscore(df_item["regularidade_consumo"])
+        + zscore(np.log1p(df_item["gasto_total"]))
     )
 
-    participacao_sq = (
-        df.dropna(subset=["codigo_item_catalogo", "ni_fornecedor", "valor_total"])
-        .groupby(["codigo_item_catalogo", "ni_fornecedor"])["valor_total"].sum()
-        .groupby(level=0, group_keys=False).apply(lambda x: (x / x.sum()) ** 2)
-    )
-    hhi_item = participacao_sq.groupby("codigo_item_catalogo").sum().rename("hhi")
-
-    df_q = df_regularidade[["indice_dependencia_v2"]].join(hhi_item).dropna()
+    df_q = df_item[["indice_dependencia_v2", "hhi"]].dropna()
     df_q["quartil"] = pd.qcut(
         df_q["indice_dependencia_v2"], 4,
         labels=["Q1 (menos regular)", "Q2", "Q3", "Q4 (mais regular)"],
@@ -985,34 +1043,7 @@ def calcular_itens_risco_h4(df, top_n=15):
         (1 a 4), faixa_risco_label ("1 - Baixo".."4 - Alto") e item_label
         (rótulo curto para o eixo do gráfico).
     """
-    valor_mensal_item = df.dropna(subset=["data_compra"]).groupby(
-        ["codigo_item_catalogo", pd.Grouper(key="data_compra", freq="ME")]
-    )["valor_total"].sum()
-
-    regularidade_consumo = valor_mensal_item.groupby("codigo_item_catalogo").apply(
-        lambda x: x.mean() / x.std() if x.std() > 0 else np.nan
-    )
-    gasto_total_item = valor_mensal_item.groupby("codigo_item_catalogo").sum()
-    n_meses = valor_mensal_item.groupby("codigo_item_catalogo").count()
-
-    df_item = pd.DataFrame({
-        "regularidade_consumo": regularidade_consumo,
-        "gasto_total": gasto_total_item,
-        "n_meses": n_meses,
-    }).query("n_meses >= 6").dropna(subset=["regularidade_consumo"])
-
-    # mesmo cálculo de HHI por item de calcular_hhi_por_quartil_h4, repetido
-    # aqui (não fatorado numa função comum) porque as duas funções retornam
-    # granularidades diferentes — quartil agregado vs. item a item.
-    participacao_sq = (
-        df.dropna(subset=["codigo_item_catalogo", "ni_fornecedor", "valor_total"])
-        .groupby(["codigo_item_catalogo", "ni_fornecedor"])["valor_total"].sum()
-        .groupby(level=0, group_keys=False).apply(lambda x: (x / x.sum()) ** 2)
-    )
-    hhi_item = participacao_sq.groupby("codigo_item_catalogo").sum().rename("hhi")
-
-    df_item = df_item.join(hhi_item).dropna(subset=["hhi"])
-    df_item["fornecedores_efetivos"] = 1 / df_item["hhi"]
+    df_item = _calcular_regularidade_e_hhi_por_item(df)
 
     # faixa de risco 1-4 via quartil de fornecedores_efetivos sobre toda a
     # base de itens (não só o top_n selecionado abaixo) — quartil com menos
