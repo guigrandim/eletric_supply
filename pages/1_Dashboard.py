@@ -957,10 +957,18 @@ def calcular_itens_risco_h4(df, top_n=15):
     itens, atendendo à limitação já documentada no caption do gráfico de H4
     (não dava para saber quais itens estavam em cada quartil).
 
+    Também classifica cada item numa faixa de risco de 1 (Baixo) a 4 (Alto),
+    via quartil de `fornecedores_efetivos` calculado sobre toda a base de
+    itens (não só os `top_n` selecionados) — faixa 4 é o quartil com menos
+    fornecedores efetivos concorrendo (maior risco de ruptura), faixa 1 é o
+    quartil com mais fornecedores (menor risco).
+
     Responde às perguntas:
     "Quais itens específicos combinam consumo irregular com poucos
     fornecedores concorrendo — ou seja, oferecem risco de ruptura de
     suprimento?"
+    "Em que faixa de risco (1=Baixo a 4=Alto) cada um desses itens se
+    encaixa, relativo a todo o catálogo?"
 
     Parâmetros
     ----------
@@ -973,7 +981,8 @@ def calcular_itens_risco_h4(df, top_n=15):
     -------
     pd.DataFrame
         Uma linha por item de risco, com codigo_item_catalogo, descricao_item,
-        regularidade_consumo, gasto_total, fornecedores_efetivos e item_label
+        regularidade_consumo, gasto_total, fornecedores_efetivos, faixa_risco
+        (1 a 4), faixa_risco_label ("1 - Baixo".."4 - Alto") e item_label
         (rótulo curto para o eixo do gráfico).
     """
     valor_mensal_item = df.dropna(subset=["data_compra"]).groupby(
@@ -1004,6 +1013,15 @@ def calcular_itens_risco_h4(df, top_n=15):
 
     df_item = df_item.join(hhi_item).dropna(subset=["hhi"])
     df_item["fornecedores_efetivos"] = 1 / df_item["hhi"]
+
+    # faixa de risco 1-4 via quartil de fornecedores_efetivos sobre toda a
+    # base de itens (não só o top_n selecionado abaixo) — quartil com menos
+    # fornecedores efetivos (maior concentração) vira faixa 4 (Alto risco).
+    df_item["faixa_risco"] = pd.qcut(
+        df_item["fornecedores_efetivos"], 4, labels=[4, 3, 2, 1]
+    ).astype(int)
+    rotulos_faixa_risco = {1: "1 - Baixo", 2: "2", 3: "3", 4: "4 - Alto"}
+    df_item["faixa_risco_label"] = df_item["faixa_risco"].map(rotulos_faixa_risco)
 
     descricao_item = df.groupby("codigo_item_catalogo")["descricao_item"].first()
     df_item = df_item.join(descricao_item)
@@ -1038,19 +1056,29 @@ def grafico_itens_risco_h4(itens_risco_h4):
     itens_risco_h4 : pd.DataFrame
         Saída de calcular_itens_risco_h4().
 
+    Cada barra é colorida pela faixa de risco (1=Baixo a 4=Alto) calculada em
+    calcular_itens_risco_h4, relativa a todo o catálogo (não só os itens
+    exibidos aqui).
+
     Retorna
     -------
     fig : plotly.graph_objects.Figure
         Gráfico de barras horizontais, ordenado do item de maior risco
-        (menos fornecedores efetivos) para o de menor risco.
+        (menos fornecedores efetivos) para o de menor risco, colorido por
+        faixa de risco.
     """
     dados_ordenados = itens_risco_h4.sort_values("fornecedores_efetivos", ascending=False)
     fig = px.bar(
         dados_ordenados, x="fornecedores_efetivos", y="item_label", orientation="h",
-        text_auto=".1f",
+        text_auto=".1f", color="faixa_risco_label",
+        category_orders={"faixa_risco_label": ["1 - Baixo", "2", "3", "4 - Alto"]},
+        color_discrete_map={
+            "1 - Baixo": "#2ca02c", "2": "#ffdd57", "3": "#ff8c42", "4 - Alto": "#d62728",
+        },
         labels={
             "item_label": "Item",
             "fornecedores_efetivos": "Número efetivo de fornecedores concorrendo",
+            "faixa_risco_label": "Faixa de risco",
         },
         title="Itens de consumo irregular com menos fornecedores concorrendo (maior risco)",
     )
@@ -1336,7 +1364,9 @@ with aba_recomendacoes:
     st.plotly_chart(fig_itens_risco_h4, width="stretch")
     st.caption(
         "Itens com consumo abaixo da mediana de regularidade, ranqueados pelos que têm menos "
-        "fornecedores efetivos (1/HHI) e maior gasto. Sensível a outliers de preço/quantidade "
+        "fornecedores efetivos (1/HHI) e maior gasto. A cor da barra é a faixa de risco "
+        "(1=Baixo a 4=Alto), calculada por quartil de fornecedores efetivos sobre todo o "
+        "catálogo — não só os itens exibidos aqui. Sensível a outliers de preço/quantidade "
         "do item, como as demais métricas de gasto mensal desta aba."
     )
 
