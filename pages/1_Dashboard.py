@@ -160,6 +160,36 @@ def carregar_dados():
     )
     df = df[~outlier_preco_incompativel]
 
+    # Mesmo erro de preenchimento das duas exclusões acima (seção 1.10 do
+    # notebook 03), numa faixa que escapa do piso de R$500 mil da exclusão
+    # anterior: aqui o preco_unitario sozinho fica abaixo do piso — é o
+    # valor_total (quantidade × preço) que fica implausível, porque a
+    # quantidade também é grande. Ex.: "CHAVE ELÉTRICA, TIPO: DIP SWITCH"
+    # (10º percentil de preço do item ≈ R$21,30) a R$16.286,87/unidade em
+    # lotes de 600 e 300 unidades — R$9,77mi e R$4,89mi em duas transações,
+    # para um componente cujo custo normal é de centavos a poucas dezenas de
+    # reais. Descoberto ao investigar por que um único fornecedor dominava
+    # 99,8% do gasto de um item na tabela de fornecedores da aba
+    # "Recomendações" (H4). Critério (5 filtros, nenhum sozinho é
+    # suficiente): item tipicamente barato (10º percentil de preço do
+    # próprio item < R$200, com >=10 transações pra ser um baseline
+    # estável — usa percentil, não mediana, porque a mediana já sai
+    # contaminada quando boa parte das transações do item tem esse mesmo
+    # erro) + preço >= 500x esse baseline + valor_total >= R$500 mil (mesmo
+    # piso das exclusões acima, aplicado ao total da transação) + preço
+    # unitário ainda abaixo de R$500 mil (não sobrepõe a exclusão anterior)
+    # + comprador não é grande concessionária (mesma lista acima).
+    eh_grande_concessionaria = df["nome_uasg"].str.contains("|".join(grandes_concessionarias), case=False, na=False)
+    n_por_item = df.groupby("codigo_item_catalogo")["preco_unitario"].transform("count")
+    p10_por_item = df.groupby("codigo_item_catalogo")["preco_unitario"].transform(lambda x: x.quantile(0.10))
+    razao_p10_item = df["preco_unitario"] / p10_por_item
+    outlier_valor_total = (
+        (n_por_item >= 10) & (p10_por_item >= 1) & (p10_por_item < 200)
+        & (razao_p10_item >= 500) & (df["valor_total"] >= 500_000)
+        & (df["preco_unitario"] < 500_000) & (~eh_grande_concessionaria)
+    )
+    df = df[~outlier_valor_total]
+
     return df
 
 
