@@ -70,7 +70,7 @@ A solução foi estruturada seguindo a metodologia **CRISP-DS**, em 3 notebooks 
 1. **Visão Geral**
 - Focada em consumo agregado, evolução temporal e os principais fornecedores e classes de material.
 - Métricas Chave: Valor total, nº de compras, fornecedores únicos, UASGs únicas, ticket médio.
-- Gráficos: Série temporal (mensal/trimestral), Top 10 fornecedores por valor, Top 10 classes, tabela detalhada filtrável por período/estado/classe/fornecedor.
+- Gráficos: Série temporal (mensal/trimestral, com escopo Opex/Capex/Todos e sinalização visual dos períodos com compra capex), Top 10 fornecedores por valor, Top 10 classes, tabela detalhada filtrável por período/estado/classe/fornecedor, mapa coroplético de pedidos por estado da UASG compradora.
 
 2. **Projeção de Consumo**
 - Focada no cenário de gasto esperado para o próximo ano civil, com a incerteza sempre visível — e na distinção entre o que dá pra projetar (opex) e o que não dá (capex).
@@ -133,7 +133,7 @@ streamlit run Home.py
 
 ### 1. 📉 Comprar mais reduz o preço unitário — economia de escala confirmada
 
-**H1 confirmada** — regressão log-log entre quantidade e preço unitário mostra relação negativa robusta (slope=-0,487, r²=0,275, p<0,001, n=153.555). Suprimentos pode usar isso de forma direta: consolidar compras de itens recorrentes entre UASGs via atas compartilhadas gera ganho de escala mensurável.
+**H1 confirmada** — regressão log-log entre quantidade e preço unitário mostra relação negativa robusta (slope=-0,487, r²=0,275, p<0,001, n=153.555). Traduzindo a elasticidade em R$: consolidar as compras do recorte analisado em pedidos do dobro do tamanho, mantendo o volume físico total constante, geraria uma economia estimada de **≈R$ 492 milhões** (≈31% do gasto desse recorte) — estimativa ilustrativa, não causal, calculada por grupo CATMAT (a elasticidade não é uniforme entre eles). Suprimentos pode usar isso de forma direta: consolidar compras de itens recorrentes entre UASGs via atas compartilhadas gera ganho de escala mensurável.
 
 ---
 
