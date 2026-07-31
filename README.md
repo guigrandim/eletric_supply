@@ -133,7 +133,7 @@ streamlit run Home.py
 
 ### 1. 📉 Comprar mais reduz o preço unitário — economia de escala confirmada
 
-**H1 confirmada** — regressão log-log entre quantidade e preço unitário mostra relação negativa robusta (slope=-0,487, r²=0,275, p<0,001, n=153.555). Traduzindo a elasticidade em R$: consolidar as compras do recorte analisado em pedidos do dobro do tamanho, mantendo o volume físico total constante, geraria uma economia estimada de **≈R$ 492 milhões** (≈31% do gasto desse recorte) — estimativa ilustrativa, não causal, calculada por grupo CATMAT (a elasticidade não é uniforme entre eles). Suprimentos pode usar isso de forma direta: consolidar compras de itens recorrentes entre UASGs via atas compartilhadas gera ganho de escala mensurável.
+**H1 confirmada** — regressão log-log entre quantidade e preço unitário mostra relação negativa robusta (slope=-0,487, r²=0,275, p<0,001, n=153.555). Traduzindo a elasticidade em R$: dobrar o tamanho do pedido em 100% do recorte analisado geraria uma economia bruta teórica de ≈R$ 492 milhões, mas só ≈61% desse gasto tem evidência real de fragmentação (mesma UASG comprando o mesmo item mais de uma vez em até 90 dias) — restringindo a esse subconjunto, a economia líquida estimada cai para **≈R$ 300 milhões** (≈19% do gasto desse recorte). Estimativa ilustrativa, não causal, calculada por grupo CATMAT (a elasticidade não é uniforme entre eles) e ainda sem descontar o custo de carregar estoque adicional da consolidação. Suprimentos pode usar isso de forma direta: consolidar compras de itens recorrentes entre UASGs via atas compartilhadas gera ganho de escala mensurável.
 
 ---
 

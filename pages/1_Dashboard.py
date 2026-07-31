@@ -884,6 +884,124 @@ def calcular_economia_h1(df):
 
 
 @st.cache_data
+def calcular_economia_liquida_h1(df, janela_dias=90):
+    """
+    Restringe a economia bruta de calcular_economia_h1() ao gasto com
+    evidência real de fragmentação, replicando ao vivo a revisão de
+    metodologia da seção H1.3 do notebook 03 (2026-07-31).
+
+    O cálculo bruto aplica o desconto de dobrar quantidade a 100% do gasto
+    do recorte, como se toda compra fosse consolidável — mas uma compra que
+    só aconteceu uma vez, sem repetição do mesmo comprador+item em nenhum
+    outro momento da série, não tem nada para consolidar com. Este cálculo
+    restringe o gasto-base a transações em que a mesma UASG (codigo_uasg)
+    comprou o mesmo item (codigo_item_catalogo) mais de uma vez dentro de
+    uma janela curta — evidência concreta de fragmentação, não presunção.
+
+    Responde às perguntas:
+    "Quanto do gasto do recorte de H1 tem evidência real de fragmentação,
+    em vez de ser reposição legítima espaçada no tempo?"
+    "Qual a economia estimada só sobre esse gasto consolidável?"
+
+    Parâmetros
+    ----------
+    df : pd.DataFrame
+        Base completa (carregar_dados()), sem filtro de UI.
+    janela_dias : int, opcional (padrão=90)
+        Janela, em dias, para considerar duas compras do mesmo item pela
+        mesma UASG como evidência de fragmentação. Escolha de modelagem,
+        não um valor calibrado nos dados — mudar esse número muda a
+        economia líquida materialmente.
+
+    Retorna
+    -------
+    pd.DataFrame
+        Uma linha por nome_grupo, com gasto_total, gasto_consolidavel,
+        pct_consolidavel e economia_liquida (R$). Ainda não descontado:
+        custo de carregar estoque adicional da consolidação (sem dado real
+        de taxa de carregamento por trás) — mesma ressalva do notebook.
+    """
+    freq_item = df.groupby("codigo_item_catalogo")["id_compra_item"].transform("count")
+    sub = df[freq_item >= 10].dropna(
+        subset=["quantidade", "preco_unitario", "nome_grupo", "data_compra", "codigo_uasg"]
+    ).copy()
+    sub = sub.sort_values(["codigo_item_catalogo", "codigo_uasg", "data_compra"])
+
+    diff_anterior = sub.groupby(["codigo_item_catalogo", "codigo_uasg"])["data_compra"].diff()
+    diff_seguinte = sub.groupby(["codigo_item_catalogo", "codigo_uasg"])["data_compra"].diff(-1).abs()
+    sub["consolidavel"] = (
+        (diff_anterior <= pd.Timedelta(days=janela_dias))
+        | (diff_seguinte <= pd.Timedelta(days=janela_dias))
+    )
+
+    linhas = []
+    for grupo, dados_grupo in sub.groupby("nome_grupo"):
+        x = np.log1p(dados_grupo["quantidade"])
+        y = np.log1p(dados_grupo["preco_unitario"])
+        slope, intercept, *_ = linregress(x, y)
+
+        qtd_mediana = dados_grupo["quantidade"].median()
+        preco_ref = np.expm1(intercept + slope * np.log1p(qtd_mediana))
+        preco_dobro = np.expm1(intercept + slope * np.log1p(qtd_mediana * 2))
+        desconto_dobro_pct = (1 - preco_dobro / preco_ref) * 100
+
+        gasto_total_grupo = dados_grupo["valor_total"].sum()
+        gasto_consolidavel_grupo = dados_grupo.loc[dados_grupo["consolidavel"], "valor_total"].sum()
+        economia_liquida_grupo = gasto_consolidavel_grupo * desconto_dobro_pct / 100
+
+        linhas.append({
+            "nome_grupo": grupo,
+            "gasto_total": gasto_total_grupo,
+            "gasto_consolidavel": gasto_consolidavel_grupo,
+            "pct_consolidavel": gasto_consolidavel_grupo / gasto_total_grupo * 100,
+            "economia_liquida": economia_liquida_grupo,
+        })
+
+    return pd.DataFrame(linhas).sort_values("economia_liquida", ascending=False).reset_index(drop=True)
+
+
+def grafico_economia_bruta_vs_liquida_h1(economia_h1, economia_liquida_h1):
+    """
+    Gera um gráfico de barras agrupadas comparando a economia bruta (teto
+    teórico, 100% do gasto do recorte) com a economia líquida (restrita ao
+    gasto com evidência real de fragmentação), por grupo CATMAT.
+
+    Responde às perguntas:
+    "Quanto da economia bruta de H1.3 sobrevive quando só considero compras
+    com evidência real de fragmentação (mesmo comprador+item em até 90
+    dias)?"
+
+    Parâmetros
+    ----------
+    economia_h1 : pd.DataFrame
+        Saída de calcular_economia_h1() (coluna economia_estimada = bruta).
+    economia_liquida_h1 : pd.DataFrame
+        Saída de calcular_economia_liquida_h1() (coluna economia_liquida).
+
+    Retorna
+    -------
+    fig : plotly.graph_objects.Figure
+        Gráfico de barras agrupadas, uma barra "Bruta" e uma "Líquida" por
+        grupo CATMAT.
+    """
+    comparativo = economia_h1[["nome_grupo", "economia_estimada"]].merge(
+        economia_liquida_h1[["nome_grupo", "economia_liquida"]], on="nome_grupo"
+    ).rename(columns={"economia_estimada": "Bruta (100% do gasto)", "economia_liquida": "Líquida (gasto consolidável)"})
+    comparativo_longo = comparativo.melt(
+        id_vars="nome_grupo", var_name="tipo", value_name="economia_rs"
+    )
+
+    fig = px.bar(
+        comparativo_longo, x="nome_grupo", y="economia_rs", color="tipo", barmode="group",
+        labels={"nome_grupo": "", "economia_rs": "Economia estimada ao dobrar o pedido (R$)", "tipo": ""},
+        title="Economia bruta (teto teórico) vs. líquida (gasto com evidência de fragmentação)",
+        text="economia_rs",
+    )
+    fig.update_traces(texttemplate="%{text:,.2s}", textposition="outside")
+    return fig
+
+
+@st.cache_data
 def calcular_cv_h2(df):
     """
     Calcula o coeficiente de variação (CV) do preço unitário por fornecedor
@@ -1357,8 +1475,8 @@ with aba_recomendacoes:
     st.markdown("#### Resumo executivo")
     st.markdown(
         "- **H1 — Economia de escala**\n"
-        "  - Achado: Preço unitário cai ~0,49% a cada 1% de aumento na quantidade (r²=0,27, p<0,001)\n"
-        "  - Recomendação: Comprar junto reduz o preço por unidade: juntar pedidos recorrentes entre unidades compradoras economiza dinheiro.\n"
+        "  - Achado: Preço unitário cai ~0,49% a cada 1% de aumento na quantidade (r²=0,27, p<0,001). Economia bruta (100% do recorte) vs. líquida (só gasto com evidência real de fragmentação) detalhada abaixo.\n"
+        "  - Recomendação: Comprar junto reduz o preço por unidade: juntar pedidos recorrentes entre unidades compradoras economiza dinheiro — priorizar itens/UASGs que já mostram compras repetidas de curto prazo, onde a economia é mais defensável.\n"
         "- **H2 — Fornecedor vs. UASG**\n"
         "  - Achado: CV de preço maior entre fornecedores do que entre UASGs (0,260 vs. 0,243; p=0,0107)\n"
         "  - Recomendação: O preço varia mais pelo fornecedor do que pela região: negociar direto com o fornecedor rende mais do que reorganizar compras por área.\n"
@@ -1406,9 +1524,45 @@ with aba_recomendacoes:
         "ilustrativa: consolidar as compras desse recorte em pedidos do dobro do tamanho, "
         "mantendo o volume físico total comprado constante, aplicando o desconto de cada grupo "
         "CATMAT ao próprio gasto do grupo (a elasticidade não é uniforme entre os grupos — usar "
-        "um desconto único sobre o gasto total subestimaria a economia). Não é causal: assume "
-        "elasticidade válida fora da faixa de quantidade observada e não contempla custo de "
-        "estoque/logística da consolidação."
+        "um desconto único sobre o gasto total subestimaria a economia). Este número trata 100% "
+        "do gasto do recorte como consolidável — ver a versão líquida, restrita ao gasto com "
+        "evidência real de fragmentação, logo abaixo."
+    )
+
+    st.markdown("#### Economia bruta vs. líquida — quanto do teto teórico é de fato acionável?")
+    economia_liquida_h1 = calcular_economia_liquida_h1(df)
+    economia_liquida_total_h1 = economia_liquida_h1["economia_liquida"].sum()
+    gasto_consolidavel_total_h1 = economia_liquida_h1["gasto_consolidavel"].sum()
+
+    col_gasto_consol, col_economia_liq, col_pct_liq = st.columns(3)
+    col_gasto_consol.metric(
+        "Gasto com evidência real de fragmentação",
+        formatar_valor_compacto(gasto_consolidavel_total_h1),
+        f"{gasto_consolidavel_total_h1 / gasto_total_h1 * 100:.1f}% do recorte",
+    )
+    col_economia_liq.metric(
+        "Economia líquida estimada",
+        formatar_valor_compacto(economia_liquida_total_h1),
+    )
+    col_pct_liq.metric(
+        "Economia bruta → líquida",
+        f"-{(1 - economia_liquida_total_h1 / economia_total_h1) * 100:.0f}%",
+        "queda ao restringir ao gasto consolidável",
+    )
+
+    fig_economia_h1 = grafico_economia_bruta_vs_liquida_h1(economia_h1, economia_liquida_h1)
+    st.plotly_chart(fig_economia_h1, width="stretch")
+    st.caption(
+        "A economia bruta acima trata todo o gasto do recorte como consolidável, mesmo compras "
+        "que só aconteceram uma vez e não têm nenhuma evidência de fragmentação. Este gráfico "
+        "restringe o gasto-base a transações em que a mesma UASG comprou o mesmo item mais de uma "
+        "vez dentro de uma janela de 90 dias — evidência concreta de que aquele pedido poderia ter "
+        "sido agrupado com outro, em vez de reposição legítima espaçada no tempo. Mesmo essa versão "
+        "líquida não desconta o custo de carregar estoque adicional da consolidação (capital de "
+        "giro parado, armazenagem) — sem um dado real de taxa de carregamento para esta base, não "
+        "foi estimado; leia a economia líquida como um teto, não como economia final. Nenhuma das "
+        "duas versões é causal: não há teste A/B comparando consolidação real vs. fragmentada, e "
+        "ambas assumem elasticidade válida fora da faixa de quantidade observada."
     )
 
     st.divider()
