@@ -307,14 +307,16 @@ def aplicar_filtros_sidebar(df):
     return df_filtrado
 
 
-def grafico_serie_temporal(df_filtrado, freq):
+def grafico_serie_temporal(df_filtrado, freq, escopo="Todos"):
     """
     Gera um gráfico de linha com o valor total comprado ao longo do tempo,
-    na granularidade escolhida pelo usuário (trimestral ou mensal).
+    na granularidade escolhida pelo usuário (trimestral ou mensal), com opção
+    de restringir a linha a opex, capex ou ambos.
 
     Responde às perguntas:
     "Como o volume de compras evoluiu ao longo do tempo?"
     "Existem picos ou quedas visíveis no consumo?"
+    "Os picos coincidem com compras de capex (equipamento pesado)?"
 
     Parâmetros
     ----------
@@ -322,22 +324,46 @@ def grafico_serie_temporal(df_filtrado, freq):
         Base já filtrada pelos filtros da sidebar.
     freq : str
         Frequência de reamostragem pandas ("QS" trimestral ou "MS" mensal).
+    escopo : str
+        "Todos", "Opex" ou "Capex" — restringe a linha ao subconjunto
+        escolhido. Critério capex = mesmo preco_unitario > R$500 mil usado
+        em preparar_serie_trimestral_projecao.
 
     Retorna
     -------
     fig : plotly.graph_objects.Figure
-        Gráfico de linha do valor total por período.
+        Gráfico de linha do valor total por período. No escopo "Todos", os
+        períodos que contêm ao menos uma compra de capex são destacados com
+        marcadores em estrela.
     """
-    serie = (
-        df_filtrado.dropna(subset=["data_compra"])
-        .set_index("data_compra")
-        .resample(freq)["valor_total"]
-        .sum()
-    )
+    df_com_data = df_filtrado.dropna(subset=["data_compra"]).set_index("data_compra")
+    capex_mask = df_com_data["preco_unitario"].gt(500_000)
+
+    if escopo == "Opex":
+        df_escopo = df_com_data[~capex_mask]
+    elif escopo == "Capex":
+        df_escopo = df_com_data[capex_mask]
+    else:
+        df_escopo = df_com_data
+
+    serie = df_escopo.resample(freq)["valor_total"].sum()
+
     fig = px.line(
         x=serie.index, y=serie.values, markers=True,
         labels={"x": "Período", "y": "Valor total (R$)"},
     )
+    fig.data[0].name = "Valor total"
+    fig.data[0].showlegend = True
+
+    if escopo == "Todos":
+        tem_capex = capex_mask.resample(freq).sum() > 0
+        periodos_capex = serie.index[tem_capex.reindex(serie.index, fill_value=False)]
+        if len(periodos_capex) > 0:
+            fig.add_trace(go.Scatter(
+                x=periodos_capex, y=serie.loc[periodos_capex],
+                mode="markers", name="Período com compra capex",
+                marker=dict(symbol="star", size=14, color="red"),
+            ))
     return fig
 
 
@@ -1213,10 +1239,14 @@ with aba_visao_geral:
     # ── Série temporal ───────────────────────────────────────────────────
     with st.container():
         st.subheader("Consumo ao longo do tempo")
-        granularidade = st.radio("Granularidade", ["Trimestral", "Mensal"], horizontal=True)
+        col_gran, col_escopo = st.columns(2)
+        with col_gran:
+            granularidade = st.radio("Granularidade", ["Trimestral", "Mensal"], horizontal=True)
+        with col_escopo:
+            escopo = st.radio("Escopo", ["Todos", "Opex", "Capex"], horizontal=True)
         freq = "QS" if granularidade == "Trimestral" else "MS"
 
-        fig_serie = grafico_serie_temporal(df_filtrado, freq)                             # <- Função 1 - Série temporal
+        fig_serie = grafico_serie_temporal(df_filtrado, freq, escopo)                      # <- Função 1 - Série temporal
         st.plotly_chart(fig_serie, width="stretch")
 
     st.divider()
