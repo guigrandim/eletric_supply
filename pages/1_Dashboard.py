@@ -1302,7 +1302,11 @@ with aba_recomendacoes:
     economia_total_h1 = economia_h1["economia_estimada"].sum()
     gasto_total_h1 = economia_h1["gasto_total"].sum()
 
-    col_economia, col_pct = st.columns(2)
+    col_gasto, col_economia, col_pct = st.columns(3)
+    col_gasto.metric(
+        "Gasto total no recorte analisado",
+        formatar_valor_compacto(gasto_total_h1),
+    )
     col_economia.metric(
         "Economia estimada ao dobrar o tamanho do pedido",
         formatar_valor_compacto(economia_total_h1),
@@ -1312,13 +1316,15 @@ with aba_recomendacoes:
         f"{economia_total_h1 / gasto_total_h1 * 100:.1f}%",
     )
     st.caption(
-        "Estimativa ilustrativa: consolidar as compras do recorte (itens com >=10 transações, "
-        "sem outliers de preço/quantidade) em pedidos do dobro do tamanho, mantendo o volume "
-        "físico total comprado constante, aplicando o desconto de cada grupo CATMAT ao próprio "
-        "gasto do grupo (a elasticidade não é uniforme entre os grupos — usar um desconto único "
-        "sobre o gasto total subestimaria a economia). Não é causal: assume elasticidade válida "
-        "fora da faixa de quantidade observada e não contempla custo de estoque/logística da "
-        "consolidação."
+        "Recorte = itens do catálogo com pelo menos 10 transações (freq_item >= 10), a base "
+        "usada na regressão preço x quantidade de H1/H1.2 — menor que o gasto total da aba "
+        "(itens com poucas transações não entram, a regressão não seria confiável). Estimativa "
+        "ilustrativa: consolidar as compras desse recorte em pedidos do dobro do tamanho, "
+        "mantendo o volume físico total comprado constante, aplicando o desconto de cada grupo "
+        "CATMAT ao próprio gasto do grupo (a elasticidade não é uniforme entre os grupos — usar "
+        "um desconto único sobre o gasto total subestimaria a economia). Não é causal: assume "
+        "elasticidade válida fora da faixa de quantidade observada e não contempla custo de "
+        "estoque/logística da consolidação."
     )
 
     st.divider()
