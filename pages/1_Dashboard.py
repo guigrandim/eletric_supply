@@ -754,6 +754,66 @@ def grafico_elasticidade_h1(elasticidade_classe):
 
 
 @st.cache_data
+def calcular_economia_h1(df):
+    """
+    Estima a economia em R$ de dobrar o tamanho médio do pedido, por grupo
+    CATMAT, replicando ao vivo a metodologia da seção H1.3 do notebook 03:
+    regressão log-log (escala log1p/expm1) separada por nome_grupo, avaliada
+    na quantidade mediana do próprio grupo, com o gasto de cada grupo
+    escalado pelo SEU desconto de dobrar a quantidade — H1.2 já mostra que a
+    elasticidade não é uniforme entre grupos, então usar um desconto pooled
+    sobre o gasto total subestimaria a economia.
+
+    Responde às perguntas:
+    "Quanto se economizaria, em R$, se os pedidos fossem consolidados no
+    dobro do tamanho, mantendo o volume físico total comprado constante?"
+
+    Parâmetros
+    ----------
+    df : pd.DataFrame
+        Base completa (carregar_dados()), sem filtro de UI.
+
+    Retorna
+    -------
+    pd.DataFrame
+        Uma linha por nome_grupo, com gasto_total, desconto_dobro_pct e
+        economia_estimada (R$), ordenada por economia decrescente. Mesmo
+        recorte de H1/H1.2/H1.3 no notebook (freq_item >= 10, sem filtro
+        adicional de IQR — o notebook mantém esse recorte sem remover
+        outlier aqui, ao contrário de calcular_elasticidade_por_classe, que
+        aplica IQR por classe para um recorte diferente/menor). Estimativa
+        teórica/ilustrativa, não causal — assume elasticidade válida fora
+        da faixa observada e não contempla custo de estoque/logística da
+        consolidação (mesmas ressalvas do notebook, seção H1.3).
+    """
+    freq_item = df.groupby("codigo_item_catalogo")["id_compra_item"].transform("count")
+    sub = df[freq_item >= 10].dropna(subset=["quantidade", "preco_unitario", "nome_grupo"]).copy()
+
+    linhas = []
+    for grupo, dados_grupo in sub.groupby("nome_grupo"):
+        x = np.log1p(dados_grupo["quantidade"])
+        y = np.log1p(dados_grupo["preco_unitario"])
+        slope, intercept, *_ = linregress(x, y)
+
+        qtd_mediana = dados_grupo["quantidade"].median()
+        preco_ref = np.expm1(intercept + slope * np.log1p(qtd_mediana))
+        preco_dobro = np.expm1(intercept + slope * np.log1p(qtd_mediana * 2))
+        desconto_dobro_pct = (1 - preco_dobro / preco_ref) * 100
+
+        gasto_grupo = dados_grupo["valor_total"].sum()
+        economia_grupo = gasto_grupo * desconto_dobro_pct / 100
+
+        linhas.append({
+            "nome_grupo": grupo,
+            "gasto_total": gasto_grupo,
+            "desconto_dobro_pct": desconto_dobro_pct,
+            "economia_estimada": economia_grupo,
+        })
+
+    return pd.DataFrame(linhas).sort_values("economia_estimada", ascending=False).reset_index(drop=True)
+
+
+@st.cache_data
 def calcular_cv_h2(df):
     """
     Calcula o coeficiente de variação (CV) do preço unitário por fornecedor
@@ -1237,6 +1297,29 @@ with aba_recomendacoes:
     elasticidade_classe = calcular_elasticidade_por_classe(df, top_classes_valor)
     fig_h1 = grafico_elasticidade_h1(elasticidade_classe)                                  # <- Função 6 - H1: elasticidade preço-quantidade
     st.plotly_chart(fig_h1, width="stretch")
+
+    economia_h1 = calcular_economia_h1(df)                                                # <- Função 12 - H1: economia em R$ ao dobrar o pedido
+    economia_total_h1 = economia_h1["economia_estimada"].sum()
+    gasto_total_h1 = economia_h1["gasto_total"].sum()
+
+    col_economia, col_pct = st.columns(2)
+    col_economia.metric(
+        "Economia estimada ao dobrar o tamanho do pedido",
+        formatar_valor_compacto(economia_total_h1),
+    )
+    col_pct.metric(
+        "% do gasto no recorte analisado",
+        f"{economia_total_h1 / gasto_total_h1 * 100:.1f}%",
+    )
+    st.caption(
+        "Estimativa ilustrativa: consolidar as compras do recorte (itens com >=10 transações, "
+        "sem outliers de preço/quantidade) em pedidos do dobro do tamanho, mantendo o volume "
+        "físico total comprado constante, aplicando o desconto de cada grupo CATMAT ao próprio "
+        "gasto do grupo (a elasticidade não é uniforme entre os grupos — usar um desconto único "
+        "sobre o gasto total subestimaria a economia). Não é causal: assume elasticidade válida "
+        "fora da faixa de quantidade observada e não contempla custo de estoque/logística da "
+        "consolidação."
+    )
 
     st.divider()
 
