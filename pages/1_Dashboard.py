@@ -271,6 +271,11 @@ def aplicar_filtros_sidebar(df):
     classe de material, fornecedor) sem alterar a base completa usada na
     Projeção e nas Recomendações?"
 
+    O filtro de fornecedor seleciona por `ni_fornecedor` (chave 1:1 real —
+    `nome_fornecedor` não é único, 73 razões sociais têm mais de um NI/CNPJ
+    associado no banco), exibindo `nome_fornecedor` no multiselect e
+    desambiguando com o NI entre parênteses quando o nome se repete.
+
     Parâmetros
     ----------
     df : pd.DataFrame
@@ -290,7 +295,17 @@ def aplicar_filtros_sidebar(df):
     )
     estados = st.sidebar.multiselect("Estado (UASG)", sorted(df["estado"].dropna().unique()))
     classes = st.sidebar.multiselect("Classe de material", sorted(df["nome_classe"].dropna().unique()))
-    fornecedores = st.sidebar.multiselect("Fornecedor", sorted(df["nome_fornecedor"].dropna().unique()))
+
+    # rótulo por ni_fornecedor (chave 1:1 real) — desambigua nomes repetidos
+    # (mesma razão social, NI/CNPJ diferente) com o NI entre parênteses
+    mapa_fornecedores = df[["ni_fornecedor", "nome_fornecedor"]].dropna().drop_duplicates()
+    contagem_nomes = mapa_fornecedores["nome_fornecedor"].value_counts()
+    nomes_duplicados = mapa_fornecedores["nome_fornecedor"].isin(contagem_nomes[contagem_nomes > 1].index)
+    mapa_fornecedores["rotulo"] = mapa_fornecedores["nome_fornecedor"]
+    mapa_fornecedores.loc[nomes_duplicados, "rotulo"] += " (NI " + mapa_fornecedores.loc[nomes_duplicados, "ni_fornecedor"].astype(str) + ")"
+    rotulo_para_ni = dict(zip(mapa_fornecedores["rotulo"], mapa_fornecedores["ni_fornecedor"]))
+
+    rotulos_selecionados = st.sidebar.multiselect("Fornecedor", sorted(rotulo_para_ni.keys()))
 
     # ── 2. Aplicação sequencial dos filtros selecionados ────────────────
     df_filtrado = df.copy()
@@ -301,8 +316,9 @@ def aplicar_filtros_sidebar(df):
         df_filtrado = df_filtrado[df_filtrado["estado"].isin(estados)]
     if classes:
         df_filtrado = df_filtrado[df_filtrado["nome_classe"].isin(classes)]
-    if fornecedores:
-        df_filtrado = df_filtrado[df_filtrado["nome_fornecedor"].isin(fornecedores)]
+    if rotulos_selecionados:
+        nis_selecionados = [rotulo_para_ni[r] for r in rotulos_selecionados]
+        df_filtrado = df_filtrado[df_filtrado["ni_fornecedor"].isin(nis_selecionados)]
 
     return df_filtrado
 
@@ -388,14 +404,22 @@ def grafico_top_fornecedores(df_filtrado, top_n=10):
     fig : plotly.graph_objects.Figure
         Gráfico de barras horizontais, valor total por fornecedor.
     """
+    # agrupa por ni_fornecedor (chave 1:1 real — nome_fornecedor não é único,
+    # 73 razões sociais têm mais de um NI/CNPJ associado), nome só para exibição
     top_fornecedores = (
-        df_filtrado.groupby("nome_fornecedor")["valor_total"].sum()
-        .sort_values(ascending=True).tail(top_n)
+        df_filtrado.groupby("ni_fornecedor")
+        .agg(valor_total=("valor_total", "sum"), nome_fornecedor=("nome_fornecedor", "first"))
+        .sort_values("valor_total", ascending=True).tail(top_n)
         .reset_index()
     )
+    # desambigua rótulos repetidos dentro do top exibido (mesmo nome, NI diferente)
+    duplicados = top_fornecedores["nome_fornecedor"].duplicated(keep=False)
+    top_fornecedores["rotulo"] = top_fornecedores["nome_fornecedor"]
+    top_fornecedores.loc[duplicados, "rotulo"] += " (NI " + top_fornecedores.loc[duplicados, "ni_fornecedor"].astype(str) + ")"
+
     fig = px.bar(
-        top_fornecedores, x="valor_total", y="nome_fornecedor", orientation="h",
-        labels={"valor_total": "Valor total (R$)", "nome_fornecedor": ""},
+        top_fornecedores, x="valor_total", y="rotulo", orientation="h",
+        labels={"valor_total": "Valor total (R$)", "rotulo": ""},
     )
     return fig
 
