@@ -13,6 +13,7 @@ Acessado via navegação a partir de Home.py — rodar com: streamlit run Home.p
 # Import Library
 #==================================
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from scipy.stats import linregress, zscore
 # st.set_page_config já foi chamado em Home.py — uma página filha chamando de
 # novo dispara StreamlitAPIException, por isso não é repetido aqui.
 CAMINHO_BANCO = Path(__file__).parents[1] / "assets" / "data" / "database.db"
+CAMINHO_GEOJSON_ESTADOS = Path(__file__).parents[1] / "assets" / "data" / "brazil_estados.geojson"
 
 #===================================
 # Functions
@@ -454,6 +456,74 @@ def grafico_top_classes(df_filtrado, top_n=10):
         top_classes, x="valor_total", y="nome_classe", orientation="h",
         labels={"valor_total": "Valor total (R$)", "nome_classe": ""},
     )
+    return fig
+
+
+@st.cache_data
+def carregar_geojson_estados():
+    """
+    Carrega o GeoJSON com os limites dos estados brasileiros (nível UF), usado
+    no mapa de pedidos por estado.
+
+    Parâmetros
+    ----------
+    Nenhum — lê diretamente de CAMINHO_GEOJSON_ESTADOS
+    (assets/data/brazil_estados.geojson).
+
+    Retorna
+    -------
+    dict
+        GeoJSON (FeatureCollection), uma feature por estado, com a UF em
+        "properties.sigla" (ex. "SP", "RJ") — chave de match com a coluna
+        `estado` do banco.
+    """
+    with open(CAMINHO_GEOJSON_ESTADOS, encoding="utf-8") as arquivo:
+        return json.load(arquivo)
+
+
+def grafico_mapa_estados(df_filtrado, geojson_estados):
+    """
+    Gera um mapa coroplético do Brasil com a quantidade de pedidos por estado
+    da UASG compradora.
+
+    Usa contagem de pedidos, não valor em R$: mesmo após a limpeza das seções
+    1.8/1.9/1.10 do notebook 03 (erros de preenchimento de preço/valor_total),
+    o valor agregado por estado ainda é sensível a poucas transações de alto
+    valor concentradas numa UASG — a contagem de pedidos é mais robusta a esse
+    tipo de distorção, por isso escolhida aqui.
+
+    Responde às perguntas:
+    "Em quais estados estão concentradas as UASGs que mais compram, em volume
+    de pedidos?"
+
+    Parâmetros
+    ----------
+    df_filtrado : pd.DataFrame
+        Base já filtrada pelos filtros da sidebar.
+    geojson_estados : dict
+        Saída de carregar_geojson_estados().
+
+    Retorna
+    -------
+    fig : plotly.graph_objects.Figure
+        Mapa coroplético do Brasil, cor = número de pedidos por estado.
+    """
+    pedidos_por_estado = (
+        df_filtrado.groupby("estado")["id_compra_item"].count()
+        .reset_index(name="n_pedidos")
+    )
+    fig = px.choropleth(
+        pedidos_por_estado,
+        geojson=geojson_estados,
+        locations="estado",
+        featureidkey="properties.sigla",
+        color="n_pedidos",
+        color_continuous_scale="Blues",
+        labels={"n_pedidos": "Nº de pedidos", "estado": "Estado"},
+        title="Quantidade de pedidos por estado da UASG compradora",
+    )
+    fig.update_geos(fitbounds="locations", visible=False)
+    fig.update_layout(margin=dict(l=0, r=0, t=40, b=0))
     return fig
 
 
@@ -1196,6 +1266,20 @@ with aba_visao_geral:
         ]].sort_values("data_compra", ascending=False),
         width="stretch",
         height=300,
+    )
+
+    st.divider()
+
+    # ── Mapa de pedidos por estado ───────────────────────────────────────
+    st.subheader("Pedidos por estado (UASG compradora)")
+    geojson_estados = carregar_geojson_estados()
+    fig_mapa_estados = grafico_mapa_estados(df_filtrado, geojson_estados)               # <- Função 13 - Mapa de pedidos por estado
+    st.plotly_chart(fig_mapa_estados, width="stretch")
+    st.caption(
+        "Quantidade de pedidos (contagem de linhas), não valor em R$ — o valor sofre distorção "
+        "de outliers de preço/lote mesmo após a limpeza das seções 1.8/1.9/1.10 do notebook 03, "
+        "enquanto a contagem de pedidos é mais robusta a esse tipo de erro concentrado em poucas "
+        "transações."
     )
 
 with aba_projecao:
